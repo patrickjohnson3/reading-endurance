@@ -16,6 +16,7 @@ let alternateOrigin;
 let chrome;
 let cdp;
 let updateVersion = false;
+let serverOffline = false;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
 class CDP {
@@ -136,12 +137,14 @@ try {
   screenshots = process.env.SCREENSHOT_DIR || join(profile, 'screenshots');
   await mkdir(screenshots, { recursive: true });
   server = createServer(async (request, response) => {
+    if (serverOffline) { request.socket.destroy(); return; }
     try {
       const path = new URL(request.url, 'http://localhost').pathname;
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
       if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v3`', '}v4`'));
+      if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
     } catch { response.writeHead(404); response.end('Not found'); }
@@ -447,7 +450,7 @@ try {
     assert.deepEqual(JSON.parse(await readFile(download, 'utf8')), await p.data());
     await p.click('[data-view=read]');
   });
-  await test('offline reload retains history and pending feedback; updates wait without reload', async () => {
+  await test('offline reload retains feedback; updates wait and deliver a complete changed shell', async () => {
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !!r?.active)'), 'service worker activation');
     await p.send('Page.reload'); await p.wait('#start-form');
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(30000);
@@ -455,6 +458,8 @@ try {
     await p.evaluate('navigator.serviceWorker.getRegistration().then(r => r.update())');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !!r?.waiting)'), 'waiting update');
     assert.equal(await p.has('#timer'), true);
+    assert.equal(await p.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--reading-test-shell").trim()'), '',
+      'A waiting update must not replace the active shell stylesheet');
     await p.click('[data-action=finish]'); await p.wait('#feedback-form');
     const frozen = (await p.data()).active.activeMs;
     await p.send('Network.enable'); await p.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
@@ -471,6 +476,27 @@ try {
     assert.ok(cacheKeys.some(k => k.endsWith(':v4')));
     assert.ok(!cacheKeys.some(k => k.endsWith(':v3')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v4'));
+    const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
+    // These are required by the runtime entrypoints, independently of the worker's shell list.
+    const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',
+      './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png']
+      .map(path => new URL(path, origin + '/').href).sort();
+    assert.deepEqual(cachedUrls, requiredUrls, 'The activated update must cache the complete app shell');
+    const saved = await p.data();
+    await p.send('Network.enable');
+    await p.send('Network.setCacheDisabled', { cacheDisabled: true });
+    serverOffline = true;
+    try {
+      await p.send('Page.reload'); await p.wait('#start-form');
+      assert.equal(await p.evaluate('!!navigator.serviceWorker.controller'), true);
+      assert.equal(await p.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--reading-test-shell").trim()'), 'upgraded',
+        'The activated worker must deliver the changed stylesheet without network or HTTP-cache fallback');
+      assert.deepEqual(await p.data(), saved, 'Offline startup after activation must retain local reading data');
+    } finally {
+      serverOffline = false;
+      await p.send('Network.setCacheDisabled', { cacheDisabled: false });
+    }
   });
   await test('unsupported vibration defaults to Off with no audio substitution', async () => {
     const unsupported = await page(await context(), true);

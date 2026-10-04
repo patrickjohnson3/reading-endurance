@@ -177,7 +177,9 @@ Validation performed in this workspace:
   changes, duration correction, cue collisions/cancellation, unsupported cues
   and insecure-origin startup,
   storage failures, real JSON download/import, offline reload with pending
-  feedback, and update activation after closing tabs. Unrelated caches survived.
+  feedback, and update activation after closing tabs. After activation, required
+  cache entries are checked, and the changed stylesheet must load with the HTTP
+  server unavailable and the browser HTTP cache disabled. Unrelated caches survived.
 - Inspected portrait (390×844), landscape (844×390), and desktop (1280×900)
   screenshots; checked 320px overflow, accessible button names, keyboard focus,
   touch-control sizes, and primary text contrast (5.56:1 or better). Navigation
