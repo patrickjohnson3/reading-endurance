@@ -143,7 +143,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v3`', '}v4`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v4`', '}v5`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -247,6 +247,48 @@ try {
       await p.send('Page.setFontSizes', { fontSizes: { standard: 16 } });
       await p.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     }
+  });
+  await test('enlarged text reflows setup, reading controls, feedback and progress', async () => {
+    const large = await page(await context());
+    await large.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+    const fits = async () => {
+      const overflow = await large.evaluate(`(() => {
+        const width = document.documentElement.clientWidth;
+        const failures = [];
+        if (document.documentElement.scrollWidth > width + 1) failures.push('page');
+        for (const e of document.querySelectorAll('.brand span, #main h1, #main h2, #timer, .metric strong, .metric span, #main button')) {
+          if (!e.getClientRects().length) continue;
+          const range = document.createRange(); range.selectNodeContents(e);
+          const r = range.getBoundingClientRect();
+          const bounds = e.closest('.metric')?.getBoundingClientRect();
+          if (r.left < -1 || r.right > width + 1 || (bounds && (r.left < bounds.left || r.right > bounds.right))) failures.push(e.textContent.trim());
+        }
+        if (document.querySelector('.skip').getBoundingClientRect().bottom > 0) failures.push('unfocused skip link');
+        return failures;
+      })()`);
+      assert.deepEqual(overflow, [], 'Text and controls must fit the viewport and their metric cards');
+    };
+    try {
+      for (const font of [24, 32]) {
+        await large.send('Page.setFontSizes', { fontSizes: { standard: font } });
+        await fits();
+      }
+      await large.evaluate('document.querySelector(".skip").focus()');
+      assert.equal(await large.evaluate('document.querySelector(".skip").getBoundingClientRect().top >= 0'), true);
+      await large.evaluate('document.querySelector("#main").focus()');
+      await large.set('#setup-cue', 'off');
+      await large.click('#setup-form [type=submit]'); await large.wait('#start-form'); await fits();
+      await large.click('#start-form [type=submit]'); await large.wait('#timer'); await fits();
+      await large.advance(121000);
+      await large.click('[data-action=pause]'); await large.wait('[data-action=resume]'); await fits();
+      await large.click('[data-action=resume]'); await large.wait('[data-action=pause]'); await fits();
+      await large.click('[data-action=finish]'); await large.wait('#feedback-form'); await fits();
+      await large.click('input[value=comfortable]'); await large.click('#feedback-form .primary'); await large.wait('#start-form');
+      await large.click('[data-view=progress]'); await fits();
+      const shot = await large.send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(screenshots, 'progress-large-text.png'), Buffer.from(shot.data, 'base64'));
+      await large.click('[data-view=settings]'); await fits();
+    } finally { await close(large); }
   });
   await test('an unused invalid Train field cannot block Two-minute start', async () => {
     await p.click('input[name=mode][value=train]'); await p.set('#session-target', '');
@@ -473,10 +515,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v4')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v3')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v5')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v4')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v4'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v5'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

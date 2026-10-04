@@ -1,6 +1,6 @@
 :root { color-scheme: light; --paper: #f6f4ed; --card: #fffefa; --ink: #233e34; --muted: #58655d; --line: #d5dbd3; --accent: #315b46; --wash: #e8eee5; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--paper); color: var(--ink); line-height: 1.55; }
+body { margin: 0; background: var(--paper); color: var(--ink); line-height: 1.55; overflow-wrap: anywhere; }
 button, input, select { font: inherit; }
 button, .file-label { cursor: pointer; border: 1px solid var(--line); border-radius: 10px; padding: .7rem 1rem; min-height: 48px; background: var(--card); color: var(--ink); font-weight: 600; }
 button:hover { border-color: var(--accent); background: var(--wash); }
@@ -11,10 +11,11 @@ button.danger { color: #8a2e21; }
 button.quiet { background: transparent; border-color: transparent; font-weight: 500; }
 :focus-visible { outline: 3px solid #b06034; outline-offset: 4px; }
 a { color: var(--accent); }
-.skip { position: absolute; top: -100px; left: 1rem; z-index: 10; padding: 1rem; background: white; }
-.skip:focus { top: 1rem; }
+.skip { position: absolute; top: 0; left: 1rem; max-width: calc(100% - 2rem); transform: translateY(-100%); z-index: 10; padding: 1rem; background: white; }
+.skip:focus { top: 1rem; transform: none; }
 header { max-width: 1000px; margin: auto; padding: 1.4rem 2rem; display: flex; align-items: center; justify-content: space-between; gap: 1.4rem; border-bottom: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: .7rem; font-weight: 650; letter-spacing: -.02em; white-space: nowrap; }
+.brand { display: flex; align-items: center; gap: .7rem; font-weight: 650; letter-spacing: -.02em; max-width: 100%; }
+.brand img { flex-shrink: 0; }
 nav { display: flex; flex-wrap: wrap; gap: .25rem; }
 nav button { border: 0; background: transparent; min-width: 75px; font-size: .9rem; flex: 0 0 auto; }
 nav button[aria-current] { background: var(--wash); }
@@ -51,15 +52,15 @@ select { width: 100%; }
 [hidden] { display: none !important; }
 .reading header { justify-content: center; border: 0; }
 .reading main { padding-top: 3rem; max-width: 640px; text-align: center; }
-.timer { font-variant-numeric: tabular-nums; font-size: clamp(4rem, 17vw, 6rem); line-height: 1.2; font-weight: 350; letter-spacing: -.055em; margin: 2rem 0 .4rem; }
-.reading-controls { display: flex; gap: 1rem; margin: 2.5rem 0 1rem; }
-.reading-controls button { flex: 1; min-height: 64px; font-size: 1.1rem; }
+.timer { font-variant-numeric: tabular-nums; font-size: clamp(3rem, 17vw, 6rem); line-height: 1.2; font-weight: 350; letter-spacing: -.055em; margin: 2rem 0 .4rem; }
+.reading-controls { display: flex; flex-wrap: wrap; gap: 1rem; margin: 2.5rem 0 1rem; }
+.reading-controls button { flex: 1 1 8rem; min-height: 64px; font-size: 1.1rem; }
 .reading .eyebrow { margin-bottom: 1.2rem; }
 .feedback { border: 0; padding: 0; margin: 1.5rem 0; }
 .feedback label { display: flex; gap: .8rem; align-items: center; border-bottom: 1px solid var(--line); min-height: 57px; cursor: pointer; }
 .feedback input { margin: 0; }
-.metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
-.metric { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 1.2rem; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: .8rem; }
+.metric { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: min(1.2rem, 20px); }
 .metric strong { display: block; font-size: 1.7rem; font-weight: 500; }
 .metric span { font-size: .87rem; color: var(--muted); }
 .chart { list-style: none; padding: 0; display: grid; gap: .9rem; }
@@ -88,16 +89,16 @@ dialog h2 { font-size: 1.3rem; }
   header { padding: 1.1rem 1.2rem .85rem; flex-direction: column; gap: .7rem; }
   nav { width: 100%; }
   nav button { flex: 1 0 auto; }
-  main { padding: 1.9rem 1.2rem 3rem; }
+  main { padding: 1.9rem min(1.2rem, 20px) 3rem; }
   .notice { margin: .75rem 1.2rem 0; }
-  .panel { padding: 1.15rem; }
+  .panel { padding: min(1.15rem, 20px); }
   .reading main { padding-top: 2rem; }
   .reading-controls { margin-top: 2rem; }
 }
 @media (max-height: 500px) and (orientation: landscape) {
   .reading header { padding: .6rem; }
   .reading main { padding-top: .5rem; }
-  .reading .timer { margin: .4rem 0; font-size: 4rem; }
+  .reading .timer { margin: .4rem 0; font-size: clamp(3rem, 10vw, 4rem); }
   .reading .eyebrow { margin-bottom: .3rem; }
   .reading-controls { margin: .8rem 0; }
 }

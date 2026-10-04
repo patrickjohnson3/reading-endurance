@@ -169,7 +169,7 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 22 browser cases passed in Chrome 154, plus two subprocess
+- `npm run test:ui`: 23 browser cases passed in Chrome 154, plus two subprocess
   checks for cleanup after a missing Chrome executable or early exit. Cases
   include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,
@@ -184,6 +184,9 @@ Validation performed in this workspace:
   screenshots; checked 320px overflow, accessible button names, keyboard focus,
   touch-control sizes, and primary text contrast (5.56:1 or better). Navigation
   labels select their own views at 320px with the browser font enlarged to 200%.
+  At 150% and 200% browser text, setup, reading controls, the timer, feedback,
+  and Progress cards reflow within the phone viewport; the skip link remains
+  hidden until focused.
   The blank engagement-estimate field's border has 3.31:1 contrast against the page.
 - A second full-source review fixed queued audio resuming after suspension,
   stale asynchronous actions, hidden-field validation, skipped-estimate handling,
