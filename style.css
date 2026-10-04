@@ -86,6 +86,7 @@ dialog {
 }
 dialog::backdrop { background: #142a2366; }
 dialog h2 { font-size: 1.3rem; }
+dialog .notice { margin: 1rem 0 0; }
 .file-label { display: inline-flex; align-items: center; }
 .file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .file-label:has(:focus-visible) { outline: 3px solid #b06034; outline-offset: 4px; }

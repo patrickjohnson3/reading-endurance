@@ -121,15 +121,27 @@ async function page(contextId, unsupported = false, url = origin) {
   const wait = selector => until(() => evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].some(e => e.getClientRects().length)`), selector);
   const text = () => evaluate('document.body.innerText');
   const set = (selector, value) => evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); e.value=${JSON.stringify(value)}; e.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  const press = async key => {
+    const windowsVirtualKeyCode = { Tab: 9, Enter: 13, Escape: 27 }[key];
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key, windowsVirtualKeyCode, ...(key === 'Enter' ? { text: '\r' } : {}) });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode });
+  };
   const data = () => evaluate(`JSON.parse(localStorage.getItem('reading-endurance-v1'))`);
   const advance = async ms => { await evaluate(`testClock.advance(${ms})`); await delay(320); };
   const navigate = async () => { await send('Page.navigate', { url }); await wait('#main h1'); };
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await navigate();
-  return { targetId, sessionId, send, evaluate, click, has, wait, text, set, data, advance, navigate };
+  return { targetId, sessionId, send, evaluate, click, has, wait, text, set, press, data, advance, navigate };
 }
 const context = async () => (await cdp.send('Target.createBrowserContext')).browserContextId;
 const close = p => cdp.send('Target.closeTarget', { targetId: p.targetId });
+async function tabTo(p, selector) {
+  for (let i = 0; i < 30; i++) {
+    if (await p.evaluate(`document.activeElement.matches(${JSON.stringify(selector)})`)) return;
+    await p.press('Tab');
+  }
+  throw new Error(`Control not reachable by Tab: ${selector}`);
+}
 const test = async (name, fn) => { await fn(); console.log(`PASS ${name}`); };
 let p;
 try {
@@ -143,7 +155,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v6`', '}v7`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v7`', '}v8`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -461,6 +473,60 @@ try {
     await p.evaluate('const saveButton = document.querySelector("#feedback-form [name=skip]"); saveButton.click(); saveButton.click();');
     await p.wait('#start-form'); assert.equal((await p.data()).sessions.length, before + 1);
   });
+  await test('modal storage failures expose recovery and retain unsaved feedback', async () => {
+    const editor = await page(await context());
+    const failWrites = () => editor.evaluate(`window.originalSet = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
+      if (key === 'reading-endurance-v1') throw new Error('quota');
+      return originalSet.call(this, key, value);
+    };`);
+    const restoreWrites = () => editor.evaluate('Storage.prototype.setItem = originalSet');
+    const accessibleRecovery = async () => {
+      const { nodes } = await editor.send('Accessibility.getFullAXTree');
+      assert.ok(nodes.some(n => !n.ignored && n.role?.value === 'alert'), 'The modal failure must expose an alert');
+      assert.ok(nodes.some(n => !n.ignored && n.role?.value === 'button' && n.name?.value === 'Retry storage'), 'Recovery must be accessible while the modal is open');
+    };
+    try {
+      await editor.set('#setup-cue', 'off'); await editor.click('#setup-form [type=submit]');
+      await editor.click('#start-form [type=submit]'); await editor.advance(120000);
+      await editor.click('[data-action=finish]'); await editor.click('#feedback-form [name=skip]');
+      await editor.click('[data-view=progress]'); await editor.click('[data-action=edit]');
+      await editor.click('#edit-form [value=lost]'); await editor.set('#edit-form [name=estimate]', '1.5');
+      const saved = await editor.data();
+      await failWrites(); await editor.click('#edit-form .primary');
+      assert.equal(await editor.evaluate('document.querySelector("#dialog").open'), true);
+      assert.deepEqual(await editor.data(), saved, 'A failed edit must leave the saved record unchanged');
+      await accessibleRecovery();
+      await editor.send('Page.bringToFront');
+      for (const [width, height] of [[320, 640], [844, 390], [1280, 900], [390, 844]]) {
+        await editor.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        await editor.press('Tab'); await tabTo(editor, '#dialog [data-action=retry-storage]');
+        assert.equal(await editor.evaluate(`(() => {
+          const box = document.querySelector('#dialog'); const rect = document.activeElement.getBoundingClientRect();
+          return box.scrollWidth <= box.clientWidth && rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth;
+        })()`), true, `Modal recovery must be visible without horizontal overflow at ${width}×${height}`);
+      }
+      assert.equal(await editor.evaluate('document.activeElement.matches(":focus-visible")'), true);
+      const shot = await editor.send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(screenshots, 'dialog-storage-error.png'), Buffer.from(shot.data, 'base64'));
+      await restoreWrites(); await editor.press('Enter');
+      assert.equal(await editor.evaluate('document.querySelector("#edit-form [name=estimate]").value'), '1.5');
+      assert.equal(await editor.evaluate('document.querySelector("#edit-form [name=outcome]:checked").value'), 'lost');
+      assert.equal(await editor.evaluate('document.activeElement.dataset.action'), 'close-dialog', 'Retry must leave focus on an available dialog control');
+      const { nodes } = await editor.send('Accessibility.getFullAXTree');
+      assert.ok(nodes.some(n => !n.ignored && n.role?.value === 'status'), 'Retry status must be exposed inside the dialog');
+      await tabTo(editor, '#edit-form .primary'); await editor.press('Enter'); await editor.wait('.history');
+      assert.equal((await editor.data()).sessions.length, 1);
+      assert.equal((await editor.data()).sessions[0].engagedMinutes, 1.5);
+      await editor.click('[data-view=settings]'); await editor.click('[data-action=clear]');
+      await failWrites(); await editor.click('#confirm-form [type=submit]');
+      await accessibleRecovery();
+      await editor.press('Escape');
+      assert.equal(await editor.evaluate('document.activeElement.dataset.action'), 'clear');
+      assert.equal((await editor.data()).sessions.length, 1, 'Failed clearing and cancellation must retain data');
+      const afterCancel = await editor.send('Accessibility.getFullAXTree');
+      assert.ok(afterCancel.nodes.some(n => !n.ignored && n.role?.value === 'alert'), 'The error must remain accessible after dismissing the modal');
+    } finally { await close(editor); }
+  });
   await test('skipping invalid feedback is allowed; external reasons and manual target changes hold', async () => {
     await p.click('[data-view=settings]'); await p.set('#target-form input', '20'); await p.click('#target-form [type=submit]');
     assert.equal((await p.data()).targetChanges.at(-1).target, 20);
@@ -576,10 +642,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v7')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v6')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v8')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v7')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v7'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v8'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

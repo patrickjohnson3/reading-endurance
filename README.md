@@ -151,6 +151,8 @@ feedback estimates, and version before asking for replace confirmation. Unknown
 fields are removed. Imports replace, not merge. Delete recalculates recommendations;
 clear requires confirmation. Unreadable data is preserved until explicit reset and
 can be exported verbatim. Storage failures are visible and never labeled saved.
+An open dialog exposes errors, retry, and export controls inside the dialog.
+Retry preserves entered feedback; submit it again after storage is working.
 
 Local storage is origin/browser/profile-specific and can be lost to browser data
 clearing, eviction, private browsing, uninstall behavior, or device loss. Offline
@@ -171,7 +173,7 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 25 browser cases passed in Chrome 154, plus two subprocess
+- `npm run test:ui`: 26 browser cases passed in Chrome 154, plus two subprocess
   checks for cleanup after a missing Chrome executable or early exit. Cases
   include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,

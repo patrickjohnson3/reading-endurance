@@ -36,13 +36,21 @@ function timerText(ms) {
   const seconds = Math.floor(ms / 1000);
   return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 }
-function announce(message) { $('#notice').textContent = message; $('#notice').hidden = !message; }
-function showError(message) {
-  const box = $('#storage-error');
-  box.innerHTML = `<p>${escape(message)}</p><div class="row"><button type="button" data-action="retry-storage">Retry storage</button><button type="button" data-action="export">Export current data</button>${corrupt ? '<button type="button" class="danger" data-action="clear">Reset local data…</button>' : ''}</div>`;
-  box.hidden = false;
+function announce(message) {
+  document.querySelectorAll('#notice, #dialog-notice').forEach(box => {
+    box.textContent = message; box.hidden = !message;
+  });
 }
-function clearError() { $('#storage-error').hidden = true; storageFailed = false; }
+function showError(message) {
+  document.querySelectorAll('#storage-error, #dialog-storage-error').forEach(box => {
+    box.innerHTML = `<p>${escape(message)}</p><div class="row"><button type="button" data-action="retry-storage">Retry storage</button><button type="button" data-action="export">Export current data</button>${corrupt ? '<button type="button" class="danger" data-action="clear">Reset local data…</button>' : ''}</div>`;
+    box.hidden = false;
+  });
+}
+function clearError() {
+  document.querySelectorAll('#storage-error, #dialog-storage-error').forEach(box => { box.hidden = true; });
+  storageFailed = false;
+}
 
 function persist(next = db) {
   if (!locked || corrupt) return false;
@@ -280,7 +288,8 @@ function stopCue() {
 
 function openDialog(html) {
   dialogReturnFocus = document.activeElement;
-  dialog.innerHTML = html;
+  // Content outside this native dialog is inert, including the page's live regions.
+  dialog.innerHTML = `${html}<div id="dialog-notice" role="status" class="notice" hidden></div><div id="dialog-storage-error" role="alert" class="notice error" hidden></div>`;
   dialog.showModal();
 }
 dialog.addEventListener('close', () => {
@@ -455,6 +464,7 @@ document.addEventListener('click', async event => {
     else if (persist()) {
       // Preserve unsaved form values. A failed form transaction must be submitted again.
       if (db.active && ['running', 'paused'].includes(db.active.state)) render();
+      if (dialog.open && dialog.contains(button)) dialog.querySelector('[data-action="close-dialog"]').focus();
       announce('Local storage is working. Retry saving any unsaved changes.');
     }
     return;
