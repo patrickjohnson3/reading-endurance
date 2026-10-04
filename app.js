@@ -31,6 +31,7 @@ let dialogReturnFocus;
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const minutes = ms => (ms / 60000).toLocaleString(undefined, { maximumFractionDigits: 1 });
 const timestamp = time => new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const readDescription = session => `${minutes(session.activeMs)} min · ${modeNames[session.mode]} · ${timestamp(session.finishedAt)}`;
 const rec = () => recommend(db.settings.initialTarget, db.sessions, db.targetChanges).target;
 function timerText(ms) {
   const seconds = Math.floor(ms / 1000);
@@ -177,7 +178,7 @@ function renderProgress() {
       ${s.targetMinutes !== null ? `<p>Chosen target ${s.targetMinutes} min · Prescribed ${s.prescribedTarget} min</p>` : ''}
       ${s.engagedMinutes !== null ? `<p>Following the text: about ${s.engagedMinutes} active minutes, self-reported</p>` : ''}
       <details><summary>Cue record</summary><p>Confidence deadline: ${s.confidence.passed ? 'passed' : 'not reached'}. Delivery: ${s.confidence.attempted ? 'attempted' : 'not attempted'}. ${s.targetCue ? `Target delivery: ${s.targetSignal.attempted ? 'attempted' : 'not attempted'}.` : ''} A request does not confirm that a cue was felt or heard.</p></details>
-      <div class="actions"><button type="button" data-action="edit" data-id="${escape(s.id)}">Edit feedback</button><button type="button" data-action="delete" data-id="${escape(s.id)}">Delete…</button></div></li>`).join('')}</ol>` : '<p class="muted">No reads saved yet. Start with two minutes or simply read.</p>'}
+      <div class="actions"><button type="button" data-action="edit" data-id="${escape(s.id)}" aria-label="Edit feedback for ${escape(readDescription(s))}">Edit feedback</button><button type="button" data-action="delete" data-id="${escape(s.id)}" aria-label="Delete read: ${escape(readDescription(s))}">Delete…</button></div></li>`).join('')}</ol>` : '<p class="muted">No reads saved yet. Start with two minutes or simply read.</p>'}
     <details><summary>How training changes</summary><p>Two consecutive uninterrupted Comfortable reads reaching the same chosen target add two minutes, up to 60. Challenging but engaged holds that target. Early stops hold it and reset the count.</p>
     <p>Lost the thread uses an optional estimate rounded down, between two minutes and the chosen target. Without an estimate, the chosen target drops by two minutes, with a two-minute minimum.</p>
     <p>Interrupted or uncertain reads, other stopping reasons, skipped feedback, and untargeted modes leave the recommendation unchanged and break the success count. Overrides start a separate count. Rest days do not change anything.</p><p>This is a product heuristic, not an attention-span measurement.</p></details>`;
@@ -509,8 +510,10 @@ document.addEventListener('click', async event => {
     openDialog(`<h2 id="dialog-title">Edit feedback</h2><p>${minutes(record.activeMs)} active minutes · ${timestamp(record.finishedAt)}</p>
       <form id="edit-form" data-id="${escape(record.id)}">${feedbackFields(record)}<div class="actions"><button type="button" data-action="close-dialog">Cancel</button><button type="submit" class="primary">Save feedback</button><button type="submit" name="skip" value="yes" formnovalidate>Remove feedback</button></div></form>`);
   } else if (action === 'delete') {
-    confirmAction('Delete this read?', 'The read will be removed and training will be recalculated from the remaining history.', 'Delete read', () => {
-      const next = structuredClone(db); next.sessions = next.sessions.filter(s => s.id !== button.dataset.id);
+    const record = db.sessions.find(s => s.id === button.dataset.id);
+    if (!record) return;
+    confirmAction('Delete this read?', `${readDescription(record)}. The read will be removed and training will be recalculated from the remaining history.`, 'Delete read', () => {
+      const next = structuredClone(db); next.sessions = next.sessions.filter(s => s.id !== record.id);
       if (!persist(next)) return false;
       render(); announce('Read deleted.');
     });

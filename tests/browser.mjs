@@ -155,7 +155,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v8`', '}v9`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v9`', '}v10`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -476,6 +476,51 @@ try {
     const shot = await p.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
     await writeFile(join(screenshots, 'progress-portrait.png'), Buffer.from(shot.data, 'base64'));
   });
+  await test('history action names and deletion identify the selected read', async () => {
+    const history = await page(await context());
+    try {
+      await history.set('#setup-cue', 'off'); await history.click('#setup-form [type=submit]');
+      for (const [mode, activeMs] of [['start', 60000], ['free', 180000]]) {
+        await history.click(`[name=mode][value=${mode}]`); await history.click('#start-form [type=submit]');
+        await history.advance(activeMs); await history.click('[data-action=finish]');
+        await history.click('#feedback-form [name=skip]'); await history.wait('#start-form');
+      }
+      const saved = await history.data();
+      await history.click('[data-view=progress]');
+      const rows = await history.evaluate(`[...document.querySelectorAll('.history li')].map(row => ({
+        id: row.querySelector('[data-action=delete]').dataset.id,
+        title: row.querySelector('.record-title strong').textContent,
+        timestamp: row.querySelector('.record-title span').textContent
+      }))`);
+      const { nodes } = await history.send('Accessibility.getFullAXTree');
+      const names = nodes.filter(n => !n.ignored && n.role?.value === 'button').map(n => n.name?.value);
+      for (const row of rows) {
+        for (const action of ['Edit feedback', 'Delete']) {
+          assert.ok(names.some(name => name.startsWith(action) && name.includes(row.title) && name.includes(row.timestamp)),
+            `${action} must identify the duration, mode and date shown for ${row.title}`);
+        }
+      }
+      const selected = rows[1];
+      const deleteSelector = `[data-action=delete][data-id="${selected.id}"]`;
+      await history.send('Page.bringToFront'); await tabTo(history, deleteSelector); await history.press('Enter');
+      assert.equal(await history.evaluate('document.activeElement.dataset.action'), 'close-dialog', 'Deletion must still initially focus Cancel');
+      const modal = await history.send('Accessibility.getFullAXTree');
+      const contextText = modal.nodes.filter(n => !n.ignored && n.role?.value === 'StaticText').map(n => n.name?.value).join(' ');
+      assert.ok(contextText.includes(selected.title) && contextText.includes(selected.timestamp), 'The active modal must expose the selected read without relying on inert history');
+      for (const [width, height] of [[320, 640], [844, 390], [1280, 900], [390, 844]]) {
+        await history.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        assert.equal(await history.evaluate(`(() => { const d = document.querySelector('#dialog'); const r = d.getBoundingClientRect(); return d.scrollWidth <= d.clientWidth && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })()`), true);
+      }
+      const shot = await history.send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(screenshots, 'delete-read-context.png'), Buffer.from(shot.data, 'base64'));
+      await history.press('Escape');
+      assert.equal(await history.evaluate('document.activeElement.dataset.id'), selected.id);
+      assert.deepEqual(await history.data(), saved, 'Cancellation must preserve all records');
+      await history.press('Enter'); await history.press('Tab'); await history.press('Enter');
+      await until(async () => (await history.data()).sessions.length === 1, 'selected record deletion');
+      assert.equal((await history.data()).sessions[0].id, saved.sessions[1].id, 'Confirmation must delete the identified read only');
+    } finally { await close(history); }
+  });
   await test('pause arithmetic, large landscape controls and finishing while paused', async () => {
     await p.click('[data-view=read]'); await p.click('input[name=mode][value=free]');
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(30000);
@@ -704,10 +749,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v9')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v8')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v10')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v9')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v9'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v10'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

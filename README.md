@@ -141,6 +141,8 @@ An uninterrupted timed interval is not proof of uninterrupted attention.
 
 The chart shows the latest 30 saved reads chronologically with outcome labels and
 striped interruption markers. Accessible history contains every saved read.
+History action names and deletion confirmations include the read's duration,
+mode, and timestamp.
 Observed continuation appears once there are two eligible reads: numerator is
 completed reads reaching 12 active minutes; denominator is completed reads
 reaching two active minutes. It includes cues off, suppressed, or unavailable.
@@ -176,7 +178,7 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 27 browser cases passed in Chrome 154, plus two subprocess
+- `npm run test:ui`: 28 browser cases passed in Chrome 154, plus two subprocess
   checks for cleanup after a missing Chrome executable or early exit. Cases
   include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,
