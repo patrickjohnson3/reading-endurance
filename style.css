@@ -36,7 +36,7 @@ legend { font-weight: 600; padding: 0; margin-bottom: .6rem; }
 .mode strong { display: block; font-weight: 650; }
 .mode small { display: block; color: var(--muted); font-size: .87rem; margin-top: .15rem; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); width: 20px; height: 20px; flex-shrink: 0; margin: .3rem 0 0; }
-input[type=number], select { border: 1px solid #85958a; border-radius: 8px; padding: .6rem .75rem; background: white; color: var(--ink); min-height: 48px; max-width: 100%; }
+input[type=number], select { border: 1px solid #7a8a7f; border-radius: 8px; padding: .6rem .75rem; background: white; color: var(--ink); min-height: 48px; max-width: 100%; }
 input[type=number] { width: 8rem; }
 select { width: 100%; }
 .field { display: block; margin: 1rem 0; }

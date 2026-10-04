@@ -141,7 +141,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v2`', '}v3`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v3`', '}v4`'));
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
     } catch { response.writeHead(404); response.end('Not found'); }
@@ -372,10 +372,31 @@ try {
     await p.click('input[value=external]'); await p.click('#feedback-form .primary'); await p.wait('#start-form');
     assert.match(await p.text(), /Recommended: 20 minutes/);
   });
-  await test('Lost the thread estimate changes next target and cannot exceed active duration', async () => {
+  await test('Lost the thread estimate has a visible boundary, stays constrained, and updates the target', async () => {
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(600000);
     await p.click('[data-action=finish]'); await p.wait('#feedback-form');
-    await p.click('input[value=lost]'); await p.set('input[name=estimate]', '11');
+    await p.click('input[value=lost]');
+    assert.equal(await p.evaluate('document.querySelector("input[name=estimate]").value'), '');
+    const colors = await p.evaluate(`(() => {
+      const input = document.querySelector('input[name=estimate]');
+      let outside = input.parentElement;
+      while (getComputedStyle(outside).backgroundColor === 'rgba(0, 0, 0, 0)') outside = outside.parentElement;
+      return [getComputedStyle(input).borderTopColor, getComputedStyle(outside).backgroundColor];
+    })()`);
+    assert.ok(colors.every(color => color.startsWith('rgb(')), 'Contrast check requires opaque sRGB colors');
+    const luminance = color => {
+      const [r, g, b] = color.match(/[\d.]+/g).slice(0, 3).map(value => {
+        const channel = Number(value) / 255;
+        return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+      });
+      return .2126 * r + .7152 * g + .0722 * b;
+    };
+    const [border, background] = colors.map(luminance);
+    const ratio = (Math.max(border, background) + .05) / (Math.min(border, background) + .05);
+    assert.ok(ratio >= 3, `Estimate border contrast is ${ratio.toFixed(3)}:1; WCAG 1.4.11 requires at least 3:1`);
+    const shot = await p.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    await writeFile(join(screenshots, 'feedback-estimate.png'), Buffer.from(shot.data, 'base64'));
+    await p.set('input[name=estimate]', '11');
     await p.click('#feedback-form .primary'); assert.equal(await p.has('#feedback-form'), true);
     await p.set('input[name=estimate]', '7.9'); await p.click('#feedback-form .primary'); await p.wait('#start-form');
     assert.match(await p.text(), /Recommended: 7 minutes/);
@@ -447,8 +468,8 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v3')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v2')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v4')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v3')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
   });
   await test('unsupported vibration defaults to Off with no audio substitution', async () => {
