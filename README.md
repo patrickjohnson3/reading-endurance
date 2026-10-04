@@ -18,8 +18,9 @@ npm run test:ui
 No `npm install` is needed. `npm run check` runs syntax checks and the pure-rule
 tests using Node's built-in test runner. `test:ui` additionally requires Chrome
 (`google-chrome` on PATH, or set `CHROME_BIN`). It starts a loopback-only server and
-an isolated temporary headless browser, then removes the profile. It uses Node's
-built-in WebSocket and the Chrome DevTools Protocol; no test packages are needed.
+an isolated temporary headless browser, then removes the profile, including after
+startup failures. It uses Node's built-in WebSocket and the Chrome DevTools
+Protocol; no test packages are needed.
 Set `SCREENSHOT_DIR=/tmp/reading-endurance-review` to retain screenshots.
 
 Use HTTPS or localhost. Web Locks and service workers require a secure context.
@@ -168,8 +169,9 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 21 browser cases passed in Chrome 154, including the actual
-  start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
+- `npm run test:ui`: 21 browser cases passed in Chrome 154, plus two subprocess
+  checks for cleanup after a missing Chrome executable or early exit. Cases
+  include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,
   explicit recovery, duplicate saves, skipped/edited/deleted feedback, manual
   changes, duration correction, cue collisions/cancellation, unsupported cues

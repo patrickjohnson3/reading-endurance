@@ -2,49 +2,21 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join, extname } from 'node:path';
 import { once } from 'node:events';
 
 const root = resolve(import.meta.dirname, '..');
-const profile = await mkdtemp(join(tmpdir(), 'reading-endurance-browser-'));
-const screenshots = process.env.SCREENSHOT_DIR || join(profile, 'screenshots');
-const { mkdir } = await import('node:fs/promises');
-await mkdir(screenshots, { recursive: true });
+let profile;
+let screenshots;
+let server;
+let origin;
+let alternateOrigin;
+let chrome;
+let cdp;
 let updateVersion = false;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const server = createServer(async (request, response) => {
-  try {
-    const path = new URL(request.url, 'http://localhost').pathname;
-    const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
-    if (!file.startsWith(root + '/')) throw new Error('outside root');
-    let contents = await readFile(file);
-    if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v1`', '}v2`'));
-    response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-    response.end(contents);
-  } catch { response.writeHead(404); response.end('Not found'); }
-});
-server.listen(0, '127.0.0.1');
-await once(server, 'listening');
-const origin = `http://127.0.0.1:${server.address().port}`;
-const alternateOrigin = origin.replace('127.0.0.1', 'reading-endurance.test');
-const chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
-  '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
-  '--host-resolver-rules=MAP reading-endurance.test 127.0.0.1', '--no-proxy-server',
-  `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'
-], { stdio: ['ignore', 'ignore', 'pipe'] });
-let stderr = '';
-const endpoint = await new Promise((resolveEndpoint, reject) => {
-  const timeout = setTimeout(() => reject(new Error(`Chrome did not start: ${stderr}`)), 15000);
-  chrome.stderr.on('data', chunk => {
-    stderr += chunk;
-    const found = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/);
-    if (found) { clearTimeout(timeout); resolveEndpoint(found[1]); }
-  });
-  chrome.once('error', reject);
-  chrome.once('exit', code => { clearTimeout(timeout); reject(new Error(`Chrome exited ${code}: ${stderr}`)); });
-});
 
 class CDP {
   constructor(url) {
@@ -78,9 +50,6 @@ class CDP {
     });
   }
 }
-const cdp = new CDP(endpoint);
-await cdp.ready();
-console.log(`Browser: ${(await cdp.send('Browser.getVersion')).product}`);
 const delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
 async function until(fn, label) {
   for (let i = 0; i < 70; i++) { if (await fn()) return; await delay(100); }
@@ -163,6 +132,62 @@ const close = p => cdp.send('Target.closeTarget', { targetId: p.targetId });
 const test = async (name, fn) => { await fn(); console.log(`PASS ${name}`); };
 let p;
 try {
+  profile = await mkdtemp(join(tmpdir(), 'reading-endurance-browser-'));
+  screenshots = process.env.SCREENSHOT_DIR || join(profile, 'screenshots');
+  await mkdir(screenshots, { recursive: true });
+  server = createServer(async (request, response) => {
+    try {
+      const path = new URL(request.url, 'http://localhost').pathname;
+      const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
+      if (!file.startsWith(root + '/')) throw new Error('outside root');
+      let contents = await readFile(file);
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v1`', '}v2`'));
+      response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+      response.end(contents);
+    } catch { response.writeHead(404); response.end('Not found'); }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  origin = `http://127.0.0.1:${server.address().port}`;
+  alternateOrigin = origin.replace('127.0.0.1', 'reading-endurance.test');
+  chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
+    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
+    '--host-resolver-rules=MAP reading-endurance.test 127.0.0.1', '--no-proxy-server',
+    `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  const endpoint = await new Promise((resolveEndpoint, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`Chrome did not start: ${stderr}`)), 15000);
+    chrome.stderr.on('data', chunk => {
+      stderr += chunk;
+      const found = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+      if (found) { clearTimeout(timeout); resolveEndpoint(found[1]); }
+    });
+    chrome.once('error', error => { clearTimeout(timeout); reject(error); });
+    chrome.once('exit', code => { clearTimeout(timeout); reject(new Error(`Chrome exited ${code}: ${stderr}`)); });
+  });
+  cdp = new CDP(endpoint);
+  await cdp.ready();
+  console.log(`Browser: ${(await cdp.send('Browser.getVersion')).product}`);
+  for (const [name, executable, message] of [
+    ['missing Chrome executable', join(profile, 'missing-chrome'), /ENOENT/],
+    ['Chrome exits before DevTools startup', process.execPath, /Chrome exited/]
+  ]) {
+    await test(`startup cleanup: ${name}`, async () => {
+      const temporaryRoot = await mkdtemp(join(profile, 'startup-failure-'));
+      const child = spawn(process.execPath, [import.meta.filename], {
+        env: { ...process.env, TMPDIR: temporaryRoot, TMP: temporaryRoot, TEMP: temporaryRoot, CHROME_BIN: executable },
+        stdio: ['ignore', 'ignore', 'pipe'], timeout: 20000
+      });
+      let errorOutput = '';
+      child.stderr.on('data', chunk => { errorOutput += chunk; });
+      const [code, signal] = await once(child, 'close');
+      assert.equal(signal, null, 'Failed startup must exit without timing out');
+      assert.notEqual(code, 0, 'The child must encounter the intended startup failure');
+      assert.match(errorOutput, message);
+      assert.deepEqual(await readdir(temporaryRoot), [], 'Failed startup must remove its temporary browser profile');
+    });
+  }
   const contextId = await context();
   p = await page(contextId);
   await test('setup and preview from a gesture do not start a read', async () => {
@@ -511,9 +536,12 @@ try {
   console.error('Browser check failed:', error);
   throw error;
 } finally {
-  cdp.socket.close();
-  chrome.kill('SIGTERM');
-  server.close();
-  await once(chrome, 'exit').catch(() => {});
-  await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  cdp?.socket.close();
+  if (chrome?.pid && chrome.exitCode === null && chrome.signalCode === null) {
+    const exited = once(chrome, 'exit');
+    chrome.kill('SIGTERM');
+    await exited;
+  }
+  if (server?.listening) await new Promise(resolveClose => server.close(resolveClose));
+  if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
