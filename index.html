@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#233e34">
+  <meta name="description" content="Start reading, stay a little longer, and record how it felt. A local reading timer for any book.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+  <title>Reading Endurance</title>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header id="header">
+    <div class="brand"><img src="./icons/icon.svg" width="32" height="32" alt=""><span>Reading Endurance</span></div>
+    <nav aria-label="Main navigation" id="navigation">
+      <button type="button" data-view="read" aria-current="page">Read</button>
+      <button type="button" data-view="progress">Progress</button>
+      <button type="button" data-view="settings">Settings</button>
+    </nav>
+  </header>
+  <div id="notice" role="status" class="notice" hidden></div>
+  <div id="storage-error" role="alert" class="notice error" hidden></div>
+  <main id="main" tabindex="-1"></main>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <noscript><p>This reading timer needs JavaScript. Your book can be physical or on another reader.</p></noscript>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

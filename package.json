@@ -1,0 +1,12 @@
+{
+  "name": "reading-endurance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000 --bind 127.0.0.1",
+    "test": "node --test --test-isolation=none tests/*.test.js",
+    "check": "node --check app.js && node --check core.js && node --check sw.js && npm test",
+    "test:ui": "node tests/browser.mjs"
+  }
+}
