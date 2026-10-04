@@ -488,6 +488,7 @@ document.addEventListener('click', async event => {
     });
   } else if (action === 'clear') {
     confirmAction('Clear all local data?', 'All local reads, settings, pending feedback, and manual target changes will be removed. Export first if you want to keep them.', 'Clear all data', () => {
+      if (!locked) return false;
       // An explicit reset is the only write allowed over unreadable data.
       try {
         const fresh = store.save(emptyData());
@@ -527,6 +528,7 @@ document.addEventListener('resume', () => tick({ resumed: true, allowCue: false 
 window.addEventListener('pagehide', () => {
   tick({ resumed: true, allowCue: false });
   if (locked && db.active && !storageFailed) persist();
+  if (dialog.open) dialog.close();
   stopCue(); clock = null; locked = false; releaseLock?.(); releaseLock = null;
 });
 window.addEventListener('pageshow', event => { if (event.persisted) acquire(); });

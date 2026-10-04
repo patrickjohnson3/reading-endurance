@@ -21,15 +21,17 @@ const server = createServer(async (request, response) => {
     if (!file.startsWith(root + '/')) throw new Error('outside root');
     let contents = await readFile(file);
     if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v1`', '}v2`'));
-    response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     response.end(contents);
   } catch { response.writeHead(404); response.end('Not found'); }
 });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const origin = `http://127.0.0.1:${server.address().port}`;
+const alternateOrigin = origin.replace('127.0.0.1', 'reading-endurance.test');
 const chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
   '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
+  '--host-resolver-rules=MAP reading-endurance.test 127.0.0.1', '--no-proxy-server',
   `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 let stderr = '';
@@ -464,6 +466,32 @@ try {
     await broken.wait('#setup-form');
     assert.equal((await broken.data()).sessions.length, 0);
     await close(broken);
+  });
+  await test('back/forward restoration cannot clear data owned by another tab', async () => {
+    const isolated = await context();
+    const reader = await page(isolated);
+    await reader.wait('#setup-form'); await reader.click('#setup-form [type=submit]'); await reader.wait('#start-form');
+    await reader.click('#start-form [type=submit]'); await reader.wait('#timer'); await reader.advance(30000);
+    await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+    await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+    await reader.click('[data-view=settings]'); await reader.click('[data-action=clear]');
+    await reader.evaluate('window.restoredDocument = true');
+    const history = await reader.send('Page.getNavigationHistory');
+    const entryId = history.entries[history.currentIndex].id;
+    await reader.send('Page.navigate', { url: alternateOrigin + '/style.css' });
+    await until(() => reader.evaluate('location.pathname === "/style.css"'), 'navigate away');
+    const writer = await page(isolated); await writer.wait('#start-form');
+    await writer.click('#start-form [type=submit]'); await writer.wait('#timer');
+    const expected = await writer.data();
+    await reader.send('Page.navigateToHistoryEntry', { entryId });
+    await reader.send('Page.bringToFront');
+    await until(async () => (await reader.text()).includes('Open in another tab'), 'restored lock explanation');
+    assert.equal(await reader.evaluate('window.restoredDocument'), true, 'Must restore the original document from the back/forward cache');
+    // Exercise a retained confirmation, including a submit queued before ownership was lost.
+    await reader.evaluate('document.querySelector("#confirm-form [type=submit]")?.click()');
+    assert.deepEqual(await writer.data(), expected, 'A restored non-owner must not overwrite the writer\'s history or active read');
+    assert.equal(await reader.evaluate('document.querySelector("#dialog").open'), false, 'Stale dialogs must not obstruct the lock explanation');
+    await close(reader); await close(writer);
   });
   assert.deepEqual(cdp.errors, [], 'No uncaught browser exceptions');
   console.log(`Screenshots: ${screenshots}`);

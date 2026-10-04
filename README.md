@@ -59,6 +59,8 @@ origin-wide scope as storage allows one editor tab at a time, including while
 paused or awaiting feedback. The lock is released on page hide/close, and a page
 restored from the back/forward cache reacquires it and requires recovery. A second
 tab explains the lock and offers retry after the first closes.
+Dialogs close before ownership is released; clearing unreadable data still
+requires the editor lock at the moment of the write.
 
 Finishing freezes duration immediately, even if feedback is supplied later.
 Double completion is idempotent by session ID. State transitions persist
@@ -165,8 +167,9 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 19 browser cases passed in Chrome 154, including the actual
-  start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion,
+- `npm run test:ui`: 20 browser cases passed in Chrome 154, including the actual
+  start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
+  and back/forward restoration with a stale clear confirmation,
   explicit recovery, duplicate saves, skipped/edited/deleted feedback, manual
   changes, duration correction, cue collisions/cancellation, unsupported cues,
   storage failures, real JSON download/import, offline reload with pending
