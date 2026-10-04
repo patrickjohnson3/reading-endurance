@@ -52,6 +52,7 @@ select { width: 100%; }
 [hidden] { display: none !important; }
 .reading header { justify-content: center; border: 0; }
 .reading main { padding-top: 3rem; max-width: 640px; text-align: center; }
+.reading main button { scroll-margin-block: 8px; }
 .timer { font-variant-numeric: tabular-nums; font-size: clamp(3rem, 17vw, 6rem); line-height: 1.2; font-weight: 350; letter-spacing: -.055em; margin: 2rem 0 .4rem; }
 .reading-controls { display: flex; flex-wrap: wrap; gap: 1rem; margin: 2.5rem 0 1rem; }
 .reading-controls button { flex: 1 1 8rem; min-height: 64px; font-size: 1.1rem; }

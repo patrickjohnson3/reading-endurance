@@ -66,6 +66,9 @@ requires the editor lock at the moment of the write.
 
 Successful Pause/Resume transitions keep the reading viewport and focus the
 corresponding Resume/Pause control. Finish opens feedback at the top of the page.
+Automatic timing warnings retain an available focused reading control, using
+Finish if storage failure makes Pause/Resume unavailable. Timing uncertainty
+updates the polite status region once; the ticking timer stays quiet.
 Finishing freezes duration immediately, even if feedback is supplied later.
 Double completion is idempotent by session ID. State transitions persist
 immediately; running checkpoints persist every five seconds and on visibility,
@@ -173,7 +176,7 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 26 browser cases passed in Chrome 154, plus two subprocess
+- `npm run test:ui`: 27 browser cases passed in Chrome 154, plus two subprocess
   checks for cleanup after a missing Chrome executable or early exit. Cases
   include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,

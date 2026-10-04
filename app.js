@@ -217,11 +217,17 @@ function render(focus = true) {
   syncCollision();
 }
 
-function renderReadingInPlace(action) {
+function renderReadingInPlace(action = main.contains(document.activeElement) ? document.activeElement.dataset.action : null) {
   const { scrollX, scrollY } = window;
   render(false);
-  $(`[data-action="${action}"]`).focus({ preventScroll: true });
   window.scrollTo(scrollX, scrollY);
+  if (action) {
+    const control = main.querySelector(`[data-action="${action}"]`);
+    // A storage failure disables Resume; keep Finish reachable instead.
+    const available = control && !control.disabled ? control : main.querySelector('[data-action="finish"]');
+    available?.focus({ preventScroll: true });
+    available?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }
 }
 
 function syncCollision() {
@@ -526,17 +532,18 @@ function tick({ resumed = false, allowCue = true } = {}) {
   const wasUncertain = db.active.uncertain;
   const oldPassed = `${db.active.confidence.passed}:${db.active.targetSignal.passed}`;
   const due = clock.sample(performance.now(), Date.now(), { visible: document.visibilityState === 'visible', resumed, allowCue });
+  if (!wasUncertain && db.active.uncertain) announce('Duration needs confirmation before saving. This read is excluded from training changes and longest engaged records.');
   const crossed = oldPassed !== `${db.active.confidence.passed}:${db.active.targetSignal.passed}`;
   // Record attempts before delivery. A failed write suppresses delivery and pauses the read.
   const needsWrite = crossed || performance.now() - lastPersist >= 5000 || wasUncertain !== db.active.uncertain;
   if (needsWrite && !persist()) {
     // No delivery was attempted if storage prevented it. The deadline remains passed.
     due.forEach(type => { db.active[type === 'confidence' ? 'confidence' : 'targetSignal'].attempted = false; });
-    render(false); return;
+    renderReadingInPlace(); return;
   }
   if (allowCue && !resumed) due.forEach(type => deliverCue(type, db.active.cue));
   if ($('#timer')) $('#timer').textContent = timerText(db.active.activeMs);
-  if (!wasUncertain && db.active.uncertain) render(false);
+  if (!wasUncertain && db.active.uncertain) renderReadingInPlace();
 }
 setInterval(() => tick(), 250);
 document.addEventListener('visibilitychange', () => {

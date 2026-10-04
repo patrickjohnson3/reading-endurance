@@ -155,7 +155,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v7`', '}v8`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v8`', '}v9`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -326,6 +326,68 @@ try {
       assert.equal(await small.evaluate('scrollY'), 0, 'Finish still navigates to the feedback screen');
       assert.equal((await small.data()).active.activeMs, 45000, 'Paused time must remain excluded');
     } finally { await close(small); }
+  });
+  await test('timer warnings retain keyboard controls and announce uncertainty once', async () => {
+    for (const [failure, action, width, height] of [
+      [false, 'finish', 320, 300], [false, 'pause', 844, 390], [false, 'skip', 390, 844],
+      [true, 'finish', 320, 300], [true, 'pause', 1280, 900]
+    ]) {
+      const reader = await page(await context());
+      try {
+        await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+        await reader.click('#start-form [type=submit]'); await reader.wait('#timer'); await reader.advance(1000);
+        await reader.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        await reader.send('Page.bringToFront');
+        const selector = action === 'skip' ? '.skip' : `[data-action=${action}]`;
+        await tabTo(reader, selector);
+        await reader.evaluate(`window.statusMessages = [];
+          new MutationObserver(() => { const text = document.querySelector('#notice').textContent; if (text) statusMessages.push(text); })
+            .observe(document.querySelector('#notice'), { childList: true });`);
+        if (failure) {
+          await reader.evaluate(`window.originalSet = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
+            if (key === 'reading-endurance-v1') throw new Error('quota'); return originalSet.call(this, key, value);
+          };`);
+          await reader.advance(5000);
+        } else {
+          await reader.evaluate('testClock.shift(60000)'); await reader.advance(1000);
+          assert.equal((await reader.data()).active.uncertain, true);
+        }
+        const expected = failure ? '[data-action=finish]' : selector;
+        assert.equal(await reader.evaluate(`document.activeElement.matches(${JSON.stringify(expected)})`), true,
+          `${failure ? 'Checkpoint failure' : 'Clock uncertainty'} must retain an available control when ${action} was focused`);
+        assert.equal(await reader.evaluate('document.activeElement.matches(":focus-visible")'), true);
+        const bounds = await reader.evaluate(`(() => { const r = document.activeElement.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: visualViewport.height, scroll: scrollY }; })()`);
+        assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height,
+          `The restored ${action} control must be visible after ${failure ? 'storage failure' : 'clock uncertainty'}: ${JSON.stringify(bounds)}`);
+        assert.equal(await reader.evaluate('document.querySelector("#timer").getAttribute("aria-live")'), 'off');
+        if (!failure) {
+          assert.match(await reader.evaluate('document.querySelector("#notice").textContent'), /duration.*confirm|confirm.*duration/i);
+          const { nodes } = await reader.send('Accessibility.getFullAXTree');
+          assert.ok(nodes.some(n => !n.ignored && n.role?.value === 'status' && n.properties?.some(property => property.name === 'live' && property.value.value === 'polite')));
+          await reader.advance(1000);
+          assert.equal(await reader.evaluate('statusMessages.length'), 1, 'Further timer ticks must not repeat the uncertainty message');
+        } else {
+          assert.equal(await reader.evaluate('document.querySelector("[data-action=resume]").disabled'), true);
+        }
+        if (action === 'skip') continue;
+        const shot = await reader.send('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(screenshots, `reading-${failure ? 'storage' : 'clock'}-${action}.png`), Buffer.from(shot.data, 'base64'));
+        await reader.press('Enter');
+        if (!failure && action === 'pause') {
+          await reader.wait('[data-action=resume]');
+          assert.equal(await reader.evaluate('document.activeElement.dataset.action'), 'resume');
+          await tabTo(reader, '[data-action=finish]'); await reader.press('Enter');
+        }
+        await reader.wait('#feedback-form');
+        assert.equal(await reader.evaluate('document.activeElement.id'), 'main');
+        if (failure) {
+          await reader.evaluate('Storage.prototype.setItem = originalSet');
+          await reader.click('#feedback-form [name=skip]');
+          assert.equal((await reader.data()).sessions[0].activeMs, 6000);
+          assert.equal((await reader.data()).sessions[0].interruptions, 1);
+        }
+      } finally { await close(reader); }
+    }
   });
   await test('reported safe areas protect reading content, the skip link and dialogs', async () => {
     const inset = await page(await context());
@@ -642,10 +704,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v8')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v7')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v9')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v8')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v8'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v9'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',
