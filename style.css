@@ -15,8 +15,8 @@ a { color: var(--accent); }
 .skip:focus { top: 1rem; }
 header { max-width: 1000px; margin: auto; padding: 1.4rem 2rem; display: flex; align-items: center; justify-content: space-between; gap: 1.4rem; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: .7rem; font-weight: 650; letter-spacing: -.02em; white-space: nowrap; }
-nav { display: flex; gap: .25rem; }
-nav button { border: 0; background: transparent; min-width: 75px; font-size: .9rem; }
+nav { display: flex; flex-wrap: wrap; gap: .25rem; }
+nav button { border: 0; background: transparent; min-width: 75px; font-size: .9rem; flex: 0 0 auto; }
 nav button[aria-current] { background: var(--wash); }
 main { max-width: 760px; margin: 0 auto; padding: 2.6rem 2rem 4rem; outline: none; }
 h1, h2, h3, p { margin-top: 0; }
@@ -87,7 +87,7 @@ dialog h2 { font-size: 1.3rem; }
 @media (max-width: 600px) {
   header { padding: 1.1rem 1.2rem .85rem; flex-direction: column; gap: .7rem; }
   nav { width: 100%; }
-  nav button { flex: 1; }
+  nav button { flex: 1 0 auto; }
   main { padding: 1.9rem 1.2rem 3rem; }
   .notice { margin: .75rem 1.2rem 0; }
   .panel { padding: 1.15rem; }

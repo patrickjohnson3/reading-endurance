@@ -141,7 +141,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v1`', '}v2`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v2`', '}v3`'));
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
     } catch { response.writeHead(404); response.end('Not found'); }
@@ -217,6 +217,33 @@ try {
     await p.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
     assert.equal(await p.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
     await p.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  });
+  await test('navigation labels remain clickable at 320px with 200% text', async () => {
+    await p.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+    await p.send('Page.setFontSizes', { fontSizes: { standard: 32 } });
+    try {
+      assert.equal(await p.evaluate('getComputedStyle(document.body).fontSize'), '32px');
+      for (const view of ['progress', 'settings', 'read']) {
+        const point = await p.evaluate(`(() => {
+          const button = document.querySelector('[data-view=${view}]');
+          button.scrollIntoView({block:'center',behavior:'instant'});
+          const text = button.firstChild;
+          const range = document.createRange();
+          range.setStart(text, text.length - 1); range.setEnd(text, text.length);
+          const rect = range.getBoundingClientRect();
+          return {x:rect.x + rect.width / 2, y:rect.y + rect.height / 2};
+        })()`);
+        await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
+        await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
+        assert.equal(await p.evaluate('document.querySelector("nav [aria-current]").dataset.view'), view,
+          `Clicking the ${view} label must select its own view`);
+      }
+      const shot = await p.send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(screenshots, 'navigation-large-text.png'), Buffer.from(shot.data, 'base64'));
+    } finally {
+      await p.send('Page.setFontSizes', { fontSizes: { standard: 16 } });
+      await p.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    }
   });
   await test('an unused invalid Train field cannot block Two-minute start', async () => {
     await p.click('input[name=mode][value=train]'); await p.set('#session-target', '');
@@ -420,8 +447,8 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v2')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v1')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v3')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v2')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
   });
   await test('unsupported vibration defaults to Off with no audio substitution', async () => {
