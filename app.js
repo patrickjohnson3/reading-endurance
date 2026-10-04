@@ -209,6 +209,13 @@ function render(focus = true) {
   syncCollision();
 }
 
+function renderReadingInPlace(action) {
+  const { scrollX, scrollY } = window;
+  render(false);
+  $(`[data-action="${action}"]`).focus({ preventScroll: true });
+  window.scrollTo(scrollX, scrollY);
+}
+
 function syncCollision() {
   const input = $('#session-target');
   if (!input) return;
@@ -462,12 +469,16 @@ document.addEventListener('click', async event => {
     const requested = deliverCue('confidence', selected);
     announce(requested ? 'Preview requested. Your browser and device may suppress it.' : 'Preview could not be requested. The app still works with cues off.');
   } else if (action === 'pause' && clock) {
-    clock.pause(performance.now(), Date.now()); stopCue(); persist(); render();
+    clock.pause(performance.now(), Date.now()); stopCue();
+    if (persist()) renderReadingInPlace('resume');
+    else render();
   } else if (action === 'resume' && clock && !storageFailed) {
     const pendingClock = clock;
     if (db.active.cue === 'sound') await prepareAudio();
     if (!locked || clock !== pendingClock || db.active?.state !== 'paused') return;
-    clock.resume(performance.now(), Date.now()); persist(); render();
+    clock.resume(performance.now(), Date.now());
+    if (persist()) renderReadingInPlace('pause');
+    else render();
   } else if (action === 'finish' && clock) {
     clock.finish(performance.now(), Date.now()); stopCue(); persist(); render();
   } else if (action === 'discard') {

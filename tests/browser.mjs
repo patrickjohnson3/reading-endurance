@@ -143,7 +143,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v4`', '}v5`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v5`', '}v6`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -289,6 +289,31 @@ try {
       await writeFile(join(screenshots, 'progress-large-text.png'), Buffer.from(shot.data, 'base64'));
       await large.click('[data-view=settings]'); await fits();
     } finally { await close(large); }
+  });
+  await test('pause and resume retain visible controls and keyboard focus in a short viewport', async () => {
+    const small = await page(await context());
+    try {
+      await small.set('#setup-cue', 'off'); await small.click('#setup-form [type=submit]'); await small.wait('#start-form');
+      await small.click('#start-form [type=submit]'); await small.wait('#timer'); await small.advance(30000);
+      await small.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 300, deviceScaleFactor: 1, mobile: true });
+      await small.evaluate('document.querySelector("[data-action=pause]").scrollIntoView({block:"center"})');
+      const scroll = await small.evaluate('scrollY');
+      assert.ok(scroll > 0, 'The controls must initially require scrolling');
+      await small.click('[data-action=pause]'); await small.wait('[data-action=resume]');
+      assert.ok(Math.abs(await small.evaluate('scrollY') - scroll) <= 1, 'Pause must preserve the reading viewport');
+      assert.equal(await small.evaluate('document.activeElement.dataset.action'), 'resume');
+      assert.equal(await small.evaluate('document.querySelector("[data-action=resume]").getBoundingClientRect().bottom <= visualViewport.height'), true);
+      await small.advance(60000);
+      await small.send('Page.bringToFront');
+      await small.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', windowsVirtualKeyCode: 13 });
+      await small.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+      await small.wait('[data-action=pause]');
+      assert.ok(Math.abs(await small.evaluate('scrollY') - scroll) <= 1, 'Resume must preserve the reading viewport');
+      assert.equal(await small.evaluate('document.activeElement.dataset.action'), 'pause');
+      await small.advance(15000); await small.click('[data-action=finish]'); await small.wait('#feedback-form');
+      assert.equal(await small.evaluate('scrollY'), 0, 'Finish still navigates to the feedback screen');
+      assert.equal((await small.data()).active.activeMs, 45000, 'Paused time must remain excluded');
+    } finally { await close(small); }
   });
   await test('an unused invalid Train field cannot block Two-minute start', async () => {
     await p.click('input[name=mode][value=train]'); await p.set('#session-target', '');
@@ -515,10 +540,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v5')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v4')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v6')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v5')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v5'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v6'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

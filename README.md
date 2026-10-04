@@ -64,6 +64,8 @@ tab explains the lock and offers retry after the first closes.
 Dialogs close before ownership is released; clearing unreadable data still
 requires the editor lock at the moment of the write.
 
+Successful Pause/Resume transitions keep the reading viewport and focus the
+corresponding Resume/Pause control. Finish opens feedback at the top of the page.
 Finishing freezes duration immediately, even if feedback is supplied later.
 Double completion is idempotent by session ID. State transitions persist
 immediately; running checkpoints persist every five seconds and on visibility,
@@ -169,7 +171,7 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 23 browser cases passed in Chrome 154, plus two subprocess
+- `npm run test:ui`: 24 browser cases passed in Chrome 154, plus two subprocess
   checks for cleanup after a missing Chrome executable or early exit. Cases
   include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,
@@ -187,6 +189,8 @@ Validation performed in this workspace:
   At 150% and 200% browser text, setup, reading controls, the timer, feedback,
   and Progress cards reflow within the phone viewport; the skip link remains
   hidden until focused.
+  A 320×300 reading viewport retains scrolling and keyboard focus across Pause
+  and Resume, while paused time remains excluded.
   The blank engagement-estimate field's border has 3.31:1 contrast against the page.
 - A second full-source review fixed queued audio resuming after suspension,
   stale asynchronous actions, hidden-field validation, skipped-estimate handling,
