@@ -143,7 +143,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v5`', '}v6`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v6`', '}v7`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -314,6 +314,42 @@ try {
       assert.equal(await small.evaluate('scrollY'), 0, 'Finish still navigates to the feedback screen');
       assert.equal((await small.data()).active.activeMs, 45000, 'Paused time must remain excluded');
     } finally { await close(small); }
+  });
+  await test('reported safe areas protect reading content, the skip link and dialogs', async () => {
+    const inset = await page(await context());
+    const setArea = async (width, height, insets) => {
+      await inset.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
+      await inset.send('Emulation.setSafeAreaInsetsOverride', { insets });
+    };
+    const inside = async (selector, insets, vertical = true) => {
+      const rect = await inset.evaluate(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().toJSON()`);
+      const viewport = await inset.evaluate('({width:document.documentElement.clientWidth,height:visualViewport.height})');
+      assert.ok(rect.left >= insets.left && rect.right <= viewport.width - insets.right + 1, `${selector} must stay inside horizontal safe bounds`);
+      if (vertical) assert.ok(rect.top >= insets.top && rect.bottom <= viewport.height - insets.bottom + 1, `${selector} must stay inside vertical safe bounds`);
+    };
+    const portrait = { top: 40, right: 0, bottom: 24, left: 0 };
+    const landscape = { top: 0, right: 0, bottom: 24, left: 48 };
+    try {
+      await setArea(390, 844, portrait);
+      await inside('.brand', portrait);
+      await inset.evaluate('document.querySelector(".skip").focus()'); await inside('.skip', portrait);
+      await inset.evaluate('document.querySelector("#main").focus()');
+      await inset.set('#setup-cue', 'off'); await inset.click('#setup-form [type=submit]'); await inset.wait('#start-form');
+      await setArea(640, 360, landscape); await inset.evaluate('scrollTo(0,0)');
+      await inside('#main h1', landscape);
+      await inset.click('#start-form [type=submit]'); await inset.wait('#timer');
+      await inside('.reading-controls', landscape, false);
+      const rotated = { ...landscape, right: 48, left: 0 };
+      await setArea(640, 360, rotated); await inside('.reading-controls', rotated, false);
+      await inset.advance(30000); await inset.click('[data-action=finish]'); await inset.wait('#feedback-form');
+      await inset.click('#feedback-form [name=skip]'); await inset.wait('#start-form');
+      await inset.click('[data-view=settings]'); await inset.click('[data-action=clear]'); await inset.wait('#confirm-form');
+      await inside('dialog[open]', rotated);
+      await setArea(320, 300, portrait);
+      await inside('dialog[open]', portrait);
+      await inset.click('[data-action=close-dialog]');
+      assert.equal((await inset.data()).sessions.length, 1, 'Cancelling must retain the saved read');
+    } finally { await close(inset); }
   });
   await test('an unused invalid Train field cannot block Two-minute start', async () => {
     await p.click('input[name=mode][value=train]'); await p.set('#session-target', '');
@@ -540,10 +576,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v6')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v5')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v7')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v6')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v6'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v7'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

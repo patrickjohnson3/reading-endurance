@@ -171,7 +171,7 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 24 browser cases passed in Chrome 154, plus two subprocess
+- `npm run test:ui`: 25 browser cases passed in Chrome 154, plus two subprocess
   checks for cleanup after a missing Chrome executable or early exit. Cases
   include the actual start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,
@@ -191,6 +191,10 @@ Validation performed in this workspace:
   hidden until focused.
   A 320×300 reading viewport retains scrolling and keyboard focus across Pause
   and Resume, while paused time remains excluded.
+  Browser-reported safe areas inset page content, the focused skip link, and
+  dialogs. Emulated top/bottom and left/right insets passed through setup,
+  rotation during reading, and cancellation in a short viewport. These checks
+  verify layout bounds, not physical cutout occlusion or installed-phone behavior.
   The blank engagement-estimate field's border has 3.31:1 contrast against the page.
 - A second full-source review fixed queued audio resuming after suspension,
   stale asynchronous actions, hidden-field validation, skipped-estimate handling,
@@ -224,5 +228,5 @@ Desktop checks use controlled clocks and simulated vibration/visibility; they
 verify logic, not sensation. Real Android device verification remains required
 for vibration and sound, volume/silent/DND behavior, screen lock, actual background
 and resume/sleep arithmetic, installation, offline launch, and data durability.
-Also inspect TalkBack and browser text scaling on device. No real-device pass is
-claimed.
+Also inspect TalkBack, browser text scaling, and safe areas/cutouts in installed
+portrait and landscape launches on device. No real-device pass is claimed.
