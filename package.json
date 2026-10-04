@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 8000 --bind 127.0.0.1",
-    "test": "node --test --test-isolation=none tests/*.test.js",
+    "test": "node --test --experimental-test-isolation=none tests/*.test.js",
     "check": "node --check app.js && node --check core.js && node --check sw.js && npm test",
     "test:ui": "node tests/browser.mjs"
   }
