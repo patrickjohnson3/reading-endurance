@@ -23,8 +23,9 @@ built-in WebSocket and the Chrome DevTools Protocol; no test packages are needed
 Set `SCREENSHOT_DIR=/tmp/reading-endurance-review` to retain screenshots.
 
 Use HTTPS or localhost. Web Locks and service workers require a secure context.
-The MVP requires Web Locks to manage local state safely across tabs. The app gives
-a visible explanation on unsupported browsers instead of using a racy lock.
+The MVP requires Web Locks and secure ID generation (`crypto.randomUUID()`) to
+manage local state safely across tabs. The app checks these before creating an ID
+and gives a visible explanation on unsupported browsers or insecure origins.
 Opening `index.html` directly as a file is not a supported way to run it. To try
 it on a phone, serve these static files over HTTPS using your normal development
 setup. Nothing in this project publishes or deploys a site.
@@ -167,11 +168,12 @@ cleared or installation fails.
 Validation performed in this workspace:
 
 - `npm run check`: syntax checks and 18 controlled-clock/rule/storage tests passed.
-- `npm run test:ui`: 20 browser cases passed in Chrome 154, including the actual
+- `npm run test:ui`: 21 browser cases passed in Chrome 154, including the actual
   start/finish/feedback/recommendation flow, pause/rotation, cross-tab exclusion
   and back/forward restoration with a stale clear confirmation,
   explicit recovery, duplicate saves, skipped/edited/deleted feedback, manual
-  changes, duration correction, cue collisions/cancellation, unsupported cues,
+  changes, duration correction, cue collisions/cancellation, unsupported cues
+  and insecure-origin startup,
   storage failures, real JSON download/import, offline reload with pending
   feedback, and update activation after closing tabs. Unrelated caches survived.
 - Inspected portrait (390×844), landscape (844×390), and desktop (1280×900)

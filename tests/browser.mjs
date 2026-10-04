@@ -116,7 +116,7 @@ const injection = unsupported => `
     Object.defineProperty(document, 'visibilityState', { get: () => visible ? 'visible' : 'hidden' });
     window.testVisible = value => { visible = value; document.dispatchEvent(new Event('visibilitychange')); };
   })();`;
-async function page(contextId, unsupported = false) {
+async function page(contextId, unsupported = false, url = origin) {
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId: contextId });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
   const send = async (method, params) => {
@@ -153,7 +153,7 @@ async function page(contextId, unsupported = false) {
   const set = (selector, value) => evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); e.value=${JSON.stringify(value)}; e.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   const data = () => evaluate(`JSON.parse(localStorage.getItem('reading-endurance-v1'))`);
   const advance = async ms => { await evaluate(`testClock.advance(${ms})`); await delay(320); };
-  const navigate = async () => { await send('Page.navigate', { url: origin }); await wait('#main h1'); };
+  const navigate = async () => { await send('Page.navigate', { url }); await wait('#main h1'); };
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await navigate();
   return { targetId, sessionId, send, evaluate, click, has, wait, text, set, data, advance, navigate };
@@ -492,6 +492,18 @@ try {
     assert.deepEqual(await writer.data(), expected, 'A restored non-owner must not overwrite the writer\'s history or active read');
     assert.equal(await reader.evaluate('document.querySelector("#dialog").open'), false, 'Stale dialogs must not obstruct the lock explanation');
     await close(reader); await close(writer);
+  });
+  await test('insecure startup explains unavailable APIs without writing data', async () => {
+    const unsupported = await page(await context(), true, alternateOrigin);
+    assert.equal(await unsupported.evaluate('isSecureContext'), false);
+    assert.equal(await unsupported.evaluate('typeof crypto.randomUUID'), 'undefined');
+    assert.equal(await unsupported.evaluate('typeof navigator.locks'), 'undefined');
+    assert.match(await unsupported.text(), /A supported browser is needed/);
+    assert.match(await unsupported.text(), /HTTPS or localhost/);
+    await unsupported.click('[data-action=retry-lock]');
+    assert.match(await unsupported.text(), /A supported browser is needed/);
+    assert.equal(await unsupported.data(), null, 'Unsupported startup and retry must not create local data');
+    await close(unsupported);
   });
   assert.deepEqual(cdp.errors, [], 'No uncaught browser exceptions');
   console.log(`Screenshots: ${screenshots}`);

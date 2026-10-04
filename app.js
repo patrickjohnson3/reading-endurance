@@ -4,7 +4,8 @@ import { CUES, OUTCOMES, STORAGE_KEY, LocalStore, emptyData, validateData, newSe
 const $ = selector => document.querySelector(selector);
 const main = $('#main');
 const dialog = $('#dialog');
-const owner = crypto.randomUUID();
+const supportedBrowser = !!navigator.locks && typeof globalThis.crypto?.randomUUID === 'function';
+const owner = supportedBrowser ? crypto.randomUUID() : null;
 // The lock and data share origin-wide scope, including installations at different paths.
 const lockName = STORAGE_KEY;
 const vibrationAvailable = typeof navigator.vibrate === 'function';
@@ -196,7 +197,7 @@ function render(focus = true) {
     if (button.dataset.view === view) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  if (!locked) main.innerHTML = `<h1>${navigator.locks ? 'Open in another tab.' : 'A supported browser is needed.'}</h1><p>${navigator.locks ? 'Only one tab can manage reading at a time. Close the other Reading Endurance tab, then try again.' : 'This browser cannot coordinate local reads safely across tabs. Use a current browser with Web Locks on HTTPS or localhost.'}</p><button type="button" data-action="retry-lock">Try again</button>`;
+  if (!locked) main.innerHTML = `<h1>${supportedBrowser ? 'Open in another tab.' : 'A supported browser is needed.'}</h1><p>${supportedBrowser ? 'Only one tab can manage reading at a time. Close the other Reading Endurance tab, then try again.' : 'This browser cannot coordinate local reads safely across tabs. Use a current browser on HTTPS or localhost.'}</p><button type="button" data-action="retry-lock">Try again</button>`;
   else if (corrupt) main.innerHTML = '<h1>Local data needs attention.</h1><p>Saved data could not be read. Nothing has been overwritten. Export the original data before resetting it, or retry storage.</p>';
   else if (needsRecovery) main.innerHTML = renderRecovery();
   else if (db.active?.state === 'awaiting-feedback') main.innerHTML = renderFeedback();
@@ -554,7 +555,7 @@ function load() {
 }
 function acquire() {
   if (locked || acquiring) return;
-  if (!navigator.locks) { render(); return; }
+  if (!supportedBrowser) { render(); return; }
   acquiring = true;
   navigator.locks.request(lockName, { ifAvailable: true }, async lock => {
     acquiring = false;
