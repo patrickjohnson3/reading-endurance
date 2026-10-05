@@ -531,7 +531,7 @@ document.addEventListener('click', async event => {
 });
 
 function tick({ resumed = false, allowCue = true } = {}) {
-  if (!locked || storageFailed || !clock || !['running', 'paused'].includes(db.active?.state)) return;
+  if (!locked || storageFailed || !clock || db.active?.state !== 'running') return;
   const wasUncertain = db.active.uncertain;
   const oldPassed = `${db.active.confidence.passed}:${db.active.targetSignal.passed}`;
   const due = clock.sample(performance.now(), Date.now(), { visible: document.visibilityState === 'visible', resumed, allowCue });

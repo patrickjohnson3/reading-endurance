@@ -165,7 +165,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v10`', '}v11`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v11`', '}v12`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -325,7 +325,9 @@ try {
       assert.ok(Math.abs(await small.evaluate('scrollY') - scroll) <= 1, 'Pause must preserve the reading viewport');
       assert.equal(await small.evaluate('document.activeElement.dataset.action'), 'resume');
       assert.equal(await small.evaluate('document.querySelector("[data-action=resume]").getBoundingClientRect().bottom <= visualViewport.height'), true);
+      const paused = await small.data();
       await small.advance(60000);
+      assert.deepEqual(await small.data(), paused, 'Paused callbacks must leave the durable checkpoint unchanged');
       await small.send('Page.bringToFront');
       await small.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', windowsVirtualKeyCode: 13 });
       await small.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
@@ -863,10 +865,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v11')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v10')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v12')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v11')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v11'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v12'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

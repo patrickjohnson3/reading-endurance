@@ -328,9 +328,11 @@ handler rechecks ownership, existing active state, and whether the form still
 belongs to the page. It writes the new session before creating the live clock.
 
 The 250-millisecond callback samples timestamps, repaints the timer, and checkpoints
-approximately every five seconds when callbacks run. Deadline changes and timing
-uncertainty also trigger writes. Cue attempts are recorded before delivery; a failed
-write prevents delivery. These callbacks do not count seconds.
+approximately every five seconds while running. Paused callbacks leave the duration
+and saved checkpoint unchanged; Pause, Resume, Finish, and lifecycle events still
+write explicitly. Deadline changes and timing uncertainty also trigger writes.
+Cue attempts are recorded before delivery; a failed write prevents delivery.
+These callbacks do not count seconds.
 
 Finish samples once with cues disabled, freezes `activeMs` and `finishedAt`,
 cancels output, attempts persistence, and renders feedback. Save clones the model,
@@ -360,7 +362,7 @@ Finish if storage failure makes Pause/Resume unavailable. Timing uncertainty
 updates the polite status region once; the ticking timer stays quiet.
 Finishing freezes duration immediately, even if feedback is supplied later.
 Double completion is idempotent by session ID. State transitions attempt persistence
-immediately; callbacks attempt checkpoints at five-second intervals and lifecycle
+immediately; running callbacks attempt checkpoints at five-second intervals and lifecycle
 events also checkpoint. Background scheduling and storage can prevent those writes.
 Rotation changes no timing state.
 
@@ -615,10 +617,10 @@ by the browser's worker update mechanism, not included in that asset cache.
   ordinarily controls a subsequent load; an upgrade waits for old controlled tabs
   to close.
 
-The current worker suffix is `v10`; this is independent of JSON schema version 1
+The current worker suffix is `v11`; this is independent of JSON schema version 1
 and package version 0.1.0. When changing shell files, coordinate asset references,
 `SHELL`, the cache version, and the browser upgrade fixture. That fixture currently
-serves v10, then substitutes v11 and a changed CSS marker. README-only changes do
+serves v11, then substitutes v12 and a changed CSS marker. README-only changes do
 not change a shell asset and need no cache bump.
 
 `manifest.webmanifest` uses `./` for ID, start URL, and scope, with standalone
