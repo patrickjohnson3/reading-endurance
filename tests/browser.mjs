@@ -155,7 +155,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v9`', '}v10`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v10`', '}v11`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -581,7 +581,8 @@ try {
     await p.wait('#start-form'); assert.equal((await p.data()).sessions.length, before + 1);
   });
   await test('modal storage failures expose recovery and retain unsaved feedback', async () => {
-    const editor = await page(await context());
+    const editorContext = await context();
+    const editor = await page(editorContext);
     const failWrites = () => editor.evaluate(`window.originalSet = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
       if (key === 'reading-endurance-v1') throw new Error('quota');
       return originalSet.call(this, key, value);
@@ -603,6 +604,21 @@ try {
       assert.equal(await editor.evaluate('document.querySelector("#dialog").open'), true);
       assert.deepEqual(await editor.data(), saved, 'A failed edit must leave the saved record unchanged');
       await accessibleRecovery();
+      const failureHelp = await editor.evaluate('document.querySelector("#dialog-storage-error").textContent');
+      assert.match(failureHelp, /keep this page open/i, 'Failure help must preserve the unsaved form');
+      assert.match(failureHelp, /retry storage.*submit.*again/i, 'Recovery must explain that form submission needs a separate retry');
+      assert.match(failureHelp, /exports?.*not include.*unsaved form/i, 'Failure help must disclose the export boundary');
+      const downloadDirectory = join(profile, 'failed-edit-download');
+      await mkdir(downloadDirectory);
+      await cdp.send('Browser.setDownloadBehavior', {
+        behavior: 'allow', downloadPath: downloadDirectory, browserContextId: editorContext, eventsEnabled: true
+      });
+      await editor.click('#dialog [data-action=export]');
+      const downloaded = join(downloadDirectory, 'reading-endurance-v1.json');
+      await until(async () => { try { await readFile(downloaded); return true; } catch { return false; } }, 'failed-edit export download');
+      assert.deepEqual(JSON.parse(await readFile(downloaded, 'utf8')), saved, 'Export must contain the existing model, not the unsaved edit');
+      assert.equal(await editor.evaluate('document.querySelector("#edit-form [name=outcome]:checked").value'), 'lost');
+      assert.equal(await editor.evaluate('document.querySelector("#edit-form [name=estimate]").value'), '1.5');
       await editor.send('Page.bringToFront');
       for (const [width, height] of [[320, 640], [844, 390], [1280, 900], [390, 844]]) {
         await editor.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
@@ -749,10 +765,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v10')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v9')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v11')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v10')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v10'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v11'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

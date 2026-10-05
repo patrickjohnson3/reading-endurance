@@ -64,7 +64,7 @@ function persist(next = db) {
   } catch {
     storageFailed = true;
     if (clock?.session.state === 'running') clock.pause(performance.now(), Date.now());
-    showError('Local storage could not be written. This read is paused if it was running. Changes are not saved; retry or export before closing.');
+    showError('Local storage could not be written. This read is paused if it was running. Changes are not saved. Keep this page open and retry storage, then submit any unsaved form changes again. Exports do not include unsaved form answers.');
     return false;
   }
 }

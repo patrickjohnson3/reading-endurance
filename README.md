@@ -510,10 +510,10 @@ by the browser's worker update mechanism, not included in that asset cache.
   ordinarily controls a subsequent load; an upgrade waits for old controlled tabs
   to close.
 
-The current worker suffix is `v9`; this is independent of JSON schema version 1
+The current worker suffix is `v10`; this is independent of JSON schema version 1
 and package version 0.1.0. When changing shell files, coordinate asset references,
 `SHELL`, the cache version, and the browser upgrade fixture. That fixture currently
-serves v9, then substitutes v10 and a changed CSS marker. README-only changes do
+serves v10, then substitutes v11 and a changed CSS marker. README-only changes do
 not change a shell asset and need no cache bump.
 
 `manifest.webmanifest` uses `./` for ID, start URL, and scope, with standalone
