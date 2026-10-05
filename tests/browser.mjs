@@ -165,7 +165,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v13`', '}v14`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v14`', '}v15`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -804,6 +804,42 @@ try {
     assert.equal((await p.data()).sessions.at(-1).activeMs, 108000);
     assert.equal((await p.data()).sessions.at(-1).interruptions, 1);
   });
+  await test('only the latest selected import can show confirmation or errors', async () => {
+    for (const olderValid of [true, false]) {
+      const reader = await page(await context());
+      try {
+        await reader.wait('#setup-form'); await reader.click('#setup-form [type=submit]'); await reader.wait('#start-form');
+        await reader.click('[data-view=settings]');
+        const original = await reader.data();
+        const newer = { ...original, settings: { ...original.settings, initialTarget: 40 } };
+        const older = olderValid ? JSON.stringify({ ...original, settings: { ...original.settings, initialTarget: 20 } }) : '{bad';
+        await reader.evaluate(`const originalText = File.prototype.text;
+          File.prototype.text = function() {
+            const result = originalText.call(this);
+            return this.name === 'older.json' ? result.then(text => new Promise(resolve => {
+              window.releaseOlderImport = () => resolve(text);
+            })) : result;
+          };`);
+        const selectFile = (name, contents) => reader.evaluate(`(() => {
+          const input = document.querySelector('#import-file'); const transfer = new DataTransfer();
+          transfer.items.add(new File([${JSON.stringify(contents)}], ${JSON.stringify(name)}, {type:'application/json'}));
+          input.files = transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
+        })()`);
+        await selectFile('older.json', older);
+        await until(() => reader.evaluate('typeof releaseOlderImport === "function"'), 'older native file read');
+        await selectFile('newer.json', JSON.stringify(newer)); await reader.wait('#confirm-form');
+        await reader.evaluate('window.newerConfirmation = document.querySelector("#confirm-form")');
+        const notice = await reader.evaluate('document.querySelector("#dialog-notice").textContent');
+        await reader.evaluate('releaseOlderImport(); new Promise(resolve => setTimeout(resolve, 0))');
+        assert.equal(await reader.evaluate('document.querySelector("#confirm-form") === newerConfirmation'), true,
+          'An older result must not replace the latest file confirmation');
+        assert.equal(await reader.evaluate('document.querySelector("#dialog-notice").textContent'), notice,
+          'An older parse error must not overwrite feedback for the latest selection');
+        await reader.click('#confirm-form [type=submit]'); await reader.wait('#start-form');
+        assert.deepEqual(await reader.data(), newer, 'Confirm must import the most recently selected file');
+      } finally { await close(reader); }
+    }
+  });
   await test('versioned import replaces the complete model and preserves data on invalid input or cancel', async () => {
     await p.click('[data-view=settings]');
     const original = await p.data();
@@ -878,10 +914,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v14')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v13')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v15')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v14')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v14'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v15'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

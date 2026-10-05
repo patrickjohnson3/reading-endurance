@@ -27,6 +27,7 @@ let lastPersist = 0;
 let audio = null;
 const audioNodes = new Set();
 let dialogReturnFocus;
+let importSequence = 0;
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const minutes = ms => (ms / 60000).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -438,18 +439,24 @@ document.addEventListener('change', async event => {
   syncCollision();
   if (event.target.name === 'corrected') syncEstimate(event.target.form);
   if (event.target.id !== 'import-file') return;
+  const sequence = ++importSequence;
   const file = event.target.files[0];
   event.target.value = '';
   if (!file) return;
   try {
     if (file.size > 20000000) throw new Error('This file is too large. Choose a Reading Endurance export smaller than 20 MB.');
-    const imported = validateData(JSON.parse(await file.text()));
+    const contents = await file.text();
+    if (sequence !== importSequence) return;
+    const imported = validateData(JSON.parse(contents));
     confirmAction('Replace local data?', `Import ${imported.sessions.length} saved reads, settings, and any pending read. Your current local data will be replaced. Export it first if you want to keep it.`, 'Replace local data', () => {
+      if (sequence !== importSequence) return;
       if (!persist(imported)) return false;
       clock = null; needsRecovery = !!db.active && db.active.state !== 'awaiting-feedback';
       view = 'read'; normalizeCue(); render(); announce('Data imported.');
     });
-  } catch (error) { announce(error.message || 'The JSON file could not be read. Existing data has been kept.'); }
+  } catch (error) {
+    if (sequence === importSequence) announce(error.message || 'The JSON file could not be read. Existing data has been kept.');
+  }
 });
 
 document.addEventListener('input', event => {

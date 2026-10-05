@@ -566,6 +566,8 @@ If storage cannot be read at all, that export can also fail.
 
 Import reads the selected file locally, rejects files above 20,000,000 bytes,
 parses/validates before showing Replace confirmation, and writes only on confirmation.
+Only the most recently selected file can show a confirmation or read/validation error;
+an older file read completing later is ignored.
 Unknown fields are removed. Import replaces the complete store; it does not merge.
 Imported running/paused reads require recovery; pending finished reads show feedback.
 Deleting a read or editing/removing its feedback recalculates training from remaining
@@ -617,10 +619,10 @@ by the browser's worker update mechanism, not included in that asset cache.
   ordinarily controls a subsequent load; an upgrade waits for old controlled tabs
   to close.
 
-The current worker suffix is `v13`; this is independent of JSON schema version 1
+The current worker suffix is `v14`; this is independent of JSON schema version 1
 and package version 0.1.0. When changing shell files, coordinate asset references,
 `SHELL`, the cache version, and the browser upgrade fixture. That fixture currently
-serves v13, then substitutes v14 and a changed CSS marker. README-only changes do
+serves v14, then substitutes v15 and a changed CSS marker. README-only changes do
 not change a shell asset and need no cache bump.
 
 `manifest.webmanifest` uses `./` for ID, start URL, and scope, with standalone
