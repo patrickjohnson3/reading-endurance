@@ -649,7 +649,10 @@ The browser harness starts an ephemeral loopback HTTP server and isolated Chrome
 profile. It uses Node's built-in WebSocket to speak CDP, installs controlled clocks
 before page scripts run, and saves those test clocks in sessionStorage across reload.
 Vibration is simulated; Web Audio construction, tone creation, and cancellation
-are counted around the browser API. UI actions use hit-tested pointer coordinates
+are counted around the native browser API. Preview and confidence cues use normal
+audio scheduling; the cancellation case schedules native target oscillators 60
+seconds ahead to avoid racing tone completion while clicking Finish.
+UI actions use hit-tested pointer coordinates
 and actual keyboard events, while some values, faults, and lifecycle conditions
 are injected deliberately.
 

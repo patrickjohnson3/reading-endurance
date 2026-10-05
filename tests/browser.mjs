@@ -72,12 +72,20 @@ const injection = unsupported => `
     window.testClock = { advance: ms => { elapsed += ms; saveClock(); }, shift: ms => { clockShift += ms; saveClock(); } };
     window.cueCalls = [];
     window.audioCalls = { contexts: 0, tones: 0, resumes: 0, cancellations: 0 };
+    window.testAudioDelay = 0;
+    window.pendingAudio = new Set();
     const NativeAudio = window.AudioContext;
     if (NativeAudio) window.AudioContext = class extends NativeAudio {
       constructor(...args) { super(...args); audioCalls.contexts++; }
       createOscillator() {
-        audioCalls.tones++; const oscillator = super.createOscillator(); const originalStop = oscillator.stop;
-        oscillator.stop = function(when) { if (when === undefined) audioCalls.cancellations++; return originalStop.call(this,when); };
+        audioCalls.tones++; const oscillator = super.createOscillator();
+        const offset = testAudioDelay; const originalStart = oscillator.start; const originalStop = oscillator.stop;
+        oscillator.start = function(when) { originalStart.call(this,(when ?? 0) + offset); pendingAudio.add(this); };
+        oscillator.stop = function(when) {
+          originalStop.call(this,when === undefined ? undefined : when + offset);
+          if (when === undefined) { audioCalls.cancellations++; pendingAudio.delete(this); }
+        };
+        oscillator.addEventListener('ended', () => pendingAudio.delete(oscillator));
         return oscillator;
       }
       resume() { audioCalls.resumes++; return super.resume(); }
@@ -907,16 +915,24 @@ try {
     await sound.click('#feedback-form [name=skip]'); await sound.wait('#start-form');
     await sound.click('input[name=mode][value=train]'); await sound.set('#session-target', '2');
     await sound.click('#confidence'); await sound.click('#target-cue');
+    // Keep real native nodes pending for the cancellation check, independent of CDP click latency.
+    await sound.evaluate('testAudioDelay = 60');
     await sound.click('#start-form [type=submit]'); await sound.wait('#timer'); await sound.advance(119000);
     await sound.evaluate('testClock.advance(1000)');
     await until(() => sound.evaluate('audioCalls.tones === 4'), 'two tones for target without confidence collision');
-    const cancellations = await sound.evaluate('audioCalls.cancellations');
+    const beforeFinish = await sound.evaluate('({...audioCalls, pending: pendingAudio.size})');
+    assert.equal(beforeFinish.pending, 2, 'Both target tones must still be queued when testing cancellation');
     await sound.click('[data-action=finish]'); await sound.wait('#feedback-form');
-    assert.ok(await sound.evaluate(`audioCalls.cancellations > ${cancellations}`), 'Finish stops queued target audio before a later resume');
+    assert.equal(await sound.evaluate('audioCalls.cancellations'), beforeFinish.cancellations + 2, 'Finish stops both queued target tones');
+    assert.equal(await sound.evaluate('pendingAudio.size'), 0);
+    await sound.evaluate('testAudioDelay = 0');
     await sound.click('#feedback-form [name=skip]'); await sound.wait('#start-form');
     await sound.click('#start-form [type=submit]'); await sound.wait('#timer'); await sound.advance(119000);
+    assert.equal(await sound.evaluate('audioCalls.resumes'), beforeFinish.resumes + 1, 'The next read resumes the same native audio context');
+    assert.equal(await sound.evaluate('pendingAudio.size'), 0, 'Resuming must not retain canceled target tones');
     await sound.evaluate('testVisible(false)'); await sound.advance(1000); await sound.evaluate('testVisible(true)');
     assert.equal(await sound.evaluate('audioCalls.tones'), 4);
+    assert.equal(await sound.evaluate('pendingAudio.size'), 0);
     await close(sound);
   });
   await test('a failed deadline checkpoint suppresses delivery and preserves an honest attempt flag', async () => {
