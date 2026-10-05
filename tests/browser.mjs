@@ -712,7 +712,7 @@ try {
     assert.equal((await p.data()).sessions.at(-1).activeMs, 108000);
     assert.equal((await p.data()).sessions.at(-1).interruptions, 1);
   });
-  await test('versioned import validates before replace confirmation and preserves data on cancel', async () => {
+  await test('versioned import replaces the complete model and preserves data on invalid input or cancel', async () => {
     await p.click('[data-view=settings]');
     const original = await p.data();
     const importFile = async contents => p.evaluate(`(() => {
@@ -722,12 +722,33 @@ try {
     })()`);
     await importFile('{bad'); await until(() => p.evaluate('document.querySelector("#notice").textContent.includes("JSON")'), 'invalid import message');
     assert.deepEqual(await p.data(), original);
-    const imported = structuredClone(original); imported.settings.cue = 'off';
+    const wall = await p.evaluate('Date.now()');
+    const imported = { ...structuredClone(original), nextOrder: 3,
+      settings: { setup: true, initialTarget: 30, cue: 'off' },
+      sessions: [{ ...original.sessions[0], id: 'imported-read', kind: 'session', order: 1,
+        mode: 'free', startedAt: wall - 600000, finishedAt: wall - 420000, activeMs: 180000,
+        interruptions: 0, uncertain: false, prescribedTarget: null, targetMinutes: null,
+        cue: 'off', confidenceEnabled: false, targetCue: false, outcome: 'challenging', engagedMinutes: null,
+        confidence: { passed: true, attempted: false, suppressed: false },
+        targetSignal: { passed: false, attempted: false, suppressed: false } }],
+      targetChanges: [{ kind: 'target', id: 'imported-target', at: wall - 300000, order: 2, target: 22 }],
+      active: { id: 'imported-pending', owner: 'backup-tab', mode: 'train', state: 'paused',
+        startedAt: wall - 90000, checkpointAt: wall, finishedAt: null, activeMs: 90000,
+        interruptions: 1, uncertain: false, prescribedTarget: 22, targetMinutes: 20,
+        cue: 'off', confidenceEnabled: false, targetCue: false,
+        confidence: { passed: false, attempted: false, suppressed: false },
+        targetSignal: { passed: false, attempted: false, suppressed: false } } };
     await importFile(JSON.stringify(imported)); await p.wait('#confirm-form');
     await p.click('[data-action=close-dialog]'); assert.deepEqual(await p.data(), original);
     await importFile(JSON.stringify(imported)); await p.wait('#confirm-form');
-    await p.click('#confirm-form [type=submit]'); await p.wait('#start-form');
-    assert.equal((await p.data()).settings.cue, 'off');
+    await p.click('#confirm-form [type=submit]');
+    assert.deepEqual(await p.data(), imported, 'Import must replace settings, history, manual changes, and pending state together');
+    await p.wait('#recovery-form');
+    await p.send('Page.reload'); await p.wait('#recovery-form');
+    assert.deepEqual(await p.data(), imported, 'The complete imported model must survive reload before recovery');
+    assert.equal(await p.evaluate('document.querySelector("#recovery-form input").value'), '1.5');
+    await p.click('#recovery-form [type=submit]'); await p.wait('[data-action=finish]');
+    await p.click('[data-action=finish]'); await p.click('#feedback-form [name=skip]'); await p.wait('#start-form');
     await p.click('[data-view=settings]');
     const downloadDirectory = join(profile, 'downloads'); await mkdir(downloadDirectory);
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDirectory, browserContextId: contextId, eventsEnabled: true });
