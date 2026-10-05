@@ -901,6 +901,27 @@ try {
     assert.equal(await unsupported.evaluate('audioCalls.contexts'), 0);
     await close(unsupported);
   });
+  await test('navigation cancels Start while native audio preparation is pending', async () => {
+    const reader = await page(await context(), true);
+    try {
+      await reader.set('#setup-cue', 'sound'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer'); await reader.advance(60000);
+      await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+      const saved = await reader.data();
+      await reader.evaluate(`const originalResume = AudioContext.prototype.resume;
+        AudioContext.prototype.resume = function() {
+          return originalResume.call(this).then(() => new Promise(resolve => { window.releaseStartAudio = resolve; }));
+        };`);
+      await reader.click('#start-form [type=submit]');
+      await until(() => reader.evaluate('typeof releaseStartAudio === "function"'), 'native resume completes while Start remains pending');
+      assert.deepEqual(await reader.data(), saved, 'Start must not write until audio preparation completes');
+      await reader.click('[data-view=settings]'); await reader.wait('#cue-form');
+      // Resolve audio and flush the handler's promise continuations before checking storage.
+      await reader.evaluate('releaseStartAudio(); new Promise(resolve => setTimeout(resolve, 0))');
+      assert.deepEqual(await reader.data(), saved, 'A canceled Start must preserve history without creating another read');
+      assert.equal(await reader.has('#cue-form'), true, 'Settings must remain open after canceled Start resolves');
+    } finally { await close(reader); }
+  });
   await test('explicit sound selection uses gesture activation and never queues a late tone', async () => {
     const sound = await page(await context(), true);
     await sound.wait('#setup-form'); await sound.set('#setup-cue', 'sound');
