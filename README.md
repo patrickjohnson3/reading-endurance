@@ -1,19 +1,27 @@
 # Reading Endurance
 
-A small, mobile-first static PWA for reading physical books or using another ebook
-reader. No backend, runtime packages, accounts, telemetry, text hosting, or sample
-history. All data stays in the browser.
+A small reading timer that helps you start with two minutes or work toward a
+chosen duration. Read your own physical book or use another ebook reader; this
+app does not contain books. It works in a browser, with optional home-screen
+installation. All reading data stays in that browser, with no account or cloud sync.
 
-This README is the product and developer reference. Start with the run instructions,
-then follow the architecture and lifecycle sections before changing behavior.
+For use, start with the [reader guide](#reader-guide) and [first read](#first-read).
+The [contributor reference](#run-and-validate) covers development commands,
+architecture, and lifecycle details; read it before changing behavior.
 [AGENTS.md](AGENTS.md) contains enforceable contributor rules for the whole
 repository; there are no nested instruction files.
 
 ## Contents
 
-- [Goals and non-goals](#goals-and-non-goals)
-- [Run and validate](#run-and-validate)
+For readers:
+
+- [Reader guide: open the app, settings, backups, and recovery](#reader-guide)
 - [First read](#first-read)
+- [Goals and non-goals](#goals-and-non-goals)
+
+Contributor reference:
+
+- [Run and validate](#run-and-validate)
 - [Architecture and repository layout](#architecture-and-repository-layout)
 - [Application lifecycle and control flow](#application-lifecycle-and-control-flow)
 - [Timing and recovery](#timing-and-recovery)
@@ -26,6 +34,95 @@ repository; there are no nested instruction files.
 - [Platform findings and remaining checks](#platform-findings-and-remaining-checks)
 - [Known limitations and roadmap status](#known-limitations-and-roadmap-status)
 - [Glossary](#glossary)
+
+## Reader guide
+
+This repository supplies source files. It does not document a hosted app address,
+an app-store download, or a packaged installer. You can run the files on a computer
+as described below. Phone use needs an HTTPS web host; the computer's local server
+alone does not provide phone access.
+
+Use a current browser with JavaScript and local storage enabled. The main layout
+target is an Android phone in portrait or landscape, with desktop use also
+supported. The app checks the browser features it needs and explains when they
+are unavailable. [Real-phone checks are still outstanding](#platform-findings-and-remaining-checks).
+
+### Open on a computer
+
+1. Obtain the source from the
+   [GitHub repository](https://github.com/patrickjohnson3/reading-endurance), using
+   **Code → Download ZIP**, and extract it, or use an existing checkout.
+   [GitHub's download instructions](https://docs.github.com/en/repositories/working-with-files/using-files/downloading-source-code-archives)
+   explain that menu.
+2. With Python 3 installed and available as `python3`, open a terminal in the
+   extracted folder containing `index.html` and `package.json`, then run:
+
+   ```sh
+   python3 -m http.server 8000 --bind 127.0.0.1
+   ```
+
+3. Leave that terminal running and open [http://localhost:8000](http://localhost:8000)
+   in a browser **on the same computer**. Follow [First read](#first-read).
+   Stop the server with Ctrl+C when done; run it again to reopen the app.
+
+Node, npm, Chrome's test tools, and the validation commands below are only needed
+for development. Do not open `index.html` directly: a local file does not provide
+the browser environment the app requires.
+
+### Use on a phone, install, and go offline
+
+To use it on a phone, someone must serve the application files at an **HTTPS
+address reachable from that phone**. This repository includes no hosting or
+certificate setup. If you only have a phone, you will need that address first.
+The `localhost` address above belongs to the computer, and changing it to a plain
+HTTP local-network address does not meet the app's browser requirements. For the
+person hosting it, see [Network, offline shell, and installation](#network-offline-shell-and-installation).
+
+Open the HTTPS address in your phone's browser and follow [First read](#first-read).
+Use the browser's **Install app** or **Add to Home screen** option if offered;
+installation is optional. The first visit needs a connection. With no read open,
+**Settings → Offline and installation** shows whether the app is ready to reopen
+offline. Offline access depends on the browser retaining its cached files.
+
+When an update is ready, finish and save your read, close all app tabs/windows,
+and reopen. Updates wait for those tabs to close and retain local reading data.
+
+### Settings, history, and backups
+
+After saving or discarding a read, the navigation offers:
+
+- **Read** to choose a mode and start again. Train shows a recommendation with an
+  override; Just read has no duration target.
+- **Progress** for reading totals and history. Each saved read has **Edit feedback**
+  and **Delete…** controls. Edits and deletions recalculate the training recommendation.
+- **Settings** to change **Reading cue**, preview it, and **Save cue setting**, or
+  enter a new recommendation and select **Set training target**. Cues can stay Off;
+  unavailable vibration never switches to sound automatically.
+
+Keep a backup with **Settings → Your local data → Export JSON** if your history
+matters to you. Use the same browser, device, and web address to return to your
+history. Different browsers and devices do not share it; changing the site's
+protocol, host, or port also changes where data is stored. Browser data clearing
+or eviction can remove it. **Import JSON…** replaces local settings, history, and any
+pending read after confirmation; export the current data first if you want to keep
+it. **Clear all local data…** also removes all of those items after confirmation.
+
+### Interruptions and common problems
+
+- **Pause** excludes paused time and marks the read interrupted. You can **Resume**
+  or **Finish** while paused. Interrupted reads count toward total time, but do not
+  change training or set longest-engaged records.
+- If an unfinished read reappears after closing or reloading, confirm or correct
+  the minutes you actually read and choose **Recover as paused**, or discard it.
+  Time while the app was closed is not added. Recovered reads stay marked uncertain
+  and interrupted. After **Finish**, duration is frozen; save your feedback before
+  closing because unsubmitted answers are not restored on reload.
+- If saving fails, keep the page open, check that your browser allows local storage,
+  choose **Retry storage**, then submit the unsaved form again. An export does not
+  include answers still in the form. Do not clear browser data to fix a save error
+  unless you intend to remove your local history.
+- If the app says **Open in another tab**, close the other Reading Endurance tab
+  or window, then choose **Try again**. Only one can manage reads at a time.
 
 ## Goals and non-goals
 
@@ -50,7 +147,25 @@ runtime. The app does not claim cognitive improvement, medical benefit, or that 
 cue caused a reader to continue. Native background scheduling is outside this web
 implementation; its limitations are disclosed rather than hidden behind a wrapper.
 
+## First read
+
+Choose a cue (or Off), optionally preview it, and pick an initial Train target.
+“Not sure” uses 10 minutes. Save setup, leave Two-minute start selected, and press
+**Start reading**. Put the device down and read your own book. Two active minutes
+meets the starting commitment; keep reading until you press **Finish**. Choose an
+optional engagement report or **Save without feedback**.
+
+Train displays a recommendation and a 2–60 minute override before starting.
+Just read has no target. Neither a target nor a cue stops any session. A target
+cue is separately selected for each Train read and defaults off. Confidence is
+one short pulse/tone; target is two short pulses/tones. At a two-minute target,
+confidence takes precedence; disabling confidence permits the target cue instead.
+
 ## Run and validate
+
+This section and the architecture sections below are the contributor reference.
+Readers can use the Python command in [Open on a computer](#open-on-a-computer)
+without installing Node or running tests.
 
 From this directory, with Python 3 and Node 22.8+ (validated with Node 24):
 
@@ -85,23 +200,9 @@ Use HTTPS or localhost. Web Locks and service workers require a secure context.
 The MVP requires Web Locks and secure ID generation (`crypto.randomUUID()`) to
 manage local state safely across tabs. The app checks these before creating an ID
 and gives a visible explanation on unsupported browsers or insecure origins.
-Opening `index.html` directly as a file is not a supported way to run it. To try
-it on a phone, serve these static files over HTTPS using your normal development
-setup. Nothing in this project publishes or deploys a site.
-
-## First read
-
-Choose a cue (or Off), optionally preview it, and pick an initial Train target.
-“Not sure” uses 10 minutes. Save setup, leave Two-minute start selected, and press
-**Start reading**. Put the device down and read your own book. Two active minutes
-meets the starting commitment; keep reading until you press **Finish**. Choose an
-optional engagement report or **Save without feedback**.
-
-Train displays a recommendation and a 2–60 minute override before starting.
-Just read has no target. Neither a target nor a cue stops any session. A target
-cue is separately selected for each Train read and defaults off. Confidence is
-one short pulse/tone; target is two short pulses/tones. At a two-minute target,
-confidence takes precedence; disabling confidence permits the target cue instead.
+Opening `index.html` directly as a file is not a supported way to run it.
+[Phone use requires an HTTPS host](#use-on-a-phone-install-and-go-offline);
+nothing in this project publishes or deploys a site.
 
 ## Architecture and repository layout
 
