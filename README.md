@@ -150,7 +150,11 @@ implementation; its limitations are disclosed rather than hidden behind a wrappe
 ## First read
 
 Choose a cue (or Off), optionally preview it, and pick an initial Train target.
-“Not sure” uses 10 minutes. Save setup, leave Two-minute start selected, and press
+“Not sure” uses 10 minutes. For a cue, keep this page visible and the screen
+unlocked; browser or device settings may still suppress it. The app does not keep
+the screen awake, and timing works with cues Off.
+
+Save setup, leave Two-minute start selected, and press
 **Start reading**. Put the device down and read your own book. Two active minutes
 meets the starting commitment; keep reading until you press **Finish**. Choose an
 optional engagement report or **Save without feedback**.
