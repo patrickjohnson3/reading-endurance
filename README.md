@@ -390,8 +390,12 @@ crossing could already be stale. Timing ambiguity is retained in history.
 Confidence deadline crossing and delivery attempted are separate persisted flags.
 A deadline can pass with cues off or with no delivery. A cue is attempted at most
 once, only while visible/running on a punctual callback (gap ≤2 seconds and ≤1.5
-seconds after deadline), after persisting its attempt. Finish, lifecycle return,
-delayed callbacks, and recovery never replay a cue. The app does not infer that a
+seconds after deadline), after persisting its attempt.
+The clocks are checked again immediately before output. If a successful write
+outlasts the delivery window, no cue is requested: the deadline stays passed and
+the app clears the attempt flag and tries to persist that correction.
+Finish, lifecycle return, delayed callbacks, and recovery never replay a cue.
+The app does not infer that a
 request was felt or heard. A failed checkpoint write pauses the read; retry is
 explicit. Failed final saves keep pending feedback and do not claim success.
 
@@ -619,10 +623,10 @@ by the browser's worker update mechanism, not included in that asset cache.
   ordinarily controls a subsequent load; an upgrade waits for old controlled tabs
   to close.
 
-The current worker suffix is `v14`; this is independent of JSON schema version 1
+The current worker suffix is `v15`; this is independent of JSON schema version 1
 and package version 0.1.0. When changing shell files, coordinate asset references,
 `SHELL`, the cache version, and the browser upgrade fixture. That fixture currently
-serves v14, then substitutes v15 and a changed CSS marker. README-only changes do
+serves v15, then substitutes v16 and a changed CSS marker. README-only changes do
 not change a shell asset and need no cache bump.
 
 `manifest.webmanifest` uses `./` for ID, start URL, and scope, with standalone

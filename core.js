@@ -123,6 +123,14 @@ export class ReadingClock {
       s.targetCue && s.cue !== 'off' && !(s.targetMinutes === 2 && s.confidenceEnabled), 'target');
     return due;
   }
+  isCuePunctual(type, mono, wall) {
+    const s = this.session;
+    const delta = Math.max(0, mono - this.mono);
+    const signal = type === 'confidence' ? s.confidence : s.targetSignal;
+    const deadline = type === 'confidence' ? 120000 : s.targetMinutes * 60000;
+    return s.state === 'running' && signal.passed && signal.attempted && !signal.suppressed &&
+      Math.abs(wall - this.wall - delta) <= 2000 && s.activeMs + delta - deadline <= 1500;
+  }
   pause(mono, wall) {
     if (this.session.state !== 'running') return;
     this.sample(mono, wall, { allowCue: false });

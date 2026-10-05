@@ -551,7 +551,17 @@ function tick({ resumed = false, allowCue = true } = {}) {
     due.forEach(type => { db.active[type === 'confidence' ? 'confidence' : 'targetSignal'].attempted = false; });
     renderReadingInPlace(); return;
   }
-  if (allowCue && !resumed) due.forEach(type => deliverCue(type, db.active.cue));
+  let expiredCue = false;
+  if (allowCue && !resumed) due.forEach(type => {
+    // A successful synchronous write can outlast the cue's delivery window.
+    if (!clock.isCuePunctual(type, performance.now(), Date.now())) {
+      db.active[type === 'confidence' ? 'confidence' : 'targetSignal'].attempted = false;
+      expiredCue = true;
+      return;
+    }
+    deliverCue(type, db.active.cue);
+  });
+  if (expiredCue && !persist()) renderReadingInPlace();
   if ($('#timer')) $('#timer').textContent = timerText(db.active.activeMs);
   if (!wasUncertain && db.active.uncertain) renderReadingInPlace();
 }

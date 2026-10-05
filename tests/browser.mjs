@@ -165,7 +165,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v14`', '}v15`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v15`', '}v16`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -914,10 +914,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v15')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v14')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v16')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v15')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v15'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v16'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',
@@ -1006,6 +1006,48 @@ try {
     assert.equal(await sound.evaluate('audioCalls.tones'), 4);
     assert.equal(await sound.evaluate('pendingAudio.size'), 0);
     await close(sound);
+  });
+  await test('successful slow checkpoints cannot deliver expired confidence or target cues', async () => {
+    for (const type of ['confidence', 'target']) {
+      for (const writeDelay of [1501, 1500]) {
+        const reader = await page(await context());
+        try {
+          await reader.wait('#setup-form'); await reader.click('#setup-form [type=submit]'); await reader.wait('#start-form');
+          if (type === 'target') {
+            await reader.click('input[name=mode][value=train]'); await reader.set('#session-target', '3');
+            await reader.click('#confidence'); await reader.click('#target-cue');
+          }
+          await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+          const deadline = type === 'confidence' ? 120000 : 180000;
+          const signal = type === 'confidence' ? 'confidence' : 'targetSignal';
+          await reader.advance(deadline - 1000);
+          await reader.evaluate(`window.slowCheckpoint = true;
+            const originalSet = Storage.prototype.setItem;
+            Storage.prototype.setItem = function(key, value) {
+              const result = originalSet.call(this, key, value);
+              if (key === 'reading-endurance-v1' && slowCheckpoint && JSON.parse(value).active?.${signal}.passed) {
+                slowCheckpoint = false;
+                testClock.advance(${writeDelay});
+              }
+              return result;
+            };`);
+          await reader.advance(1000);
+          assert.equal(await reader.evaluate('slowCheckpoint'), false, 'The successful deadline write must take the controlled delay');
+          const expectedAttempts = writeDelay === 1500 ? 1 : 0;
+          assert.equal(await reader.evaluate('cueCalls.length'), expectedAttempts,
+            `${type} delivery must expire after 1.5 seconds, including time spent writing`);
+          const active = (await reader.data()).active;
+          assert.equal(active[signal].passed, true);
+          assert.equal(active[signal].attempted, expectedAttempts === 1, 'Persisted flags must distinguish a passed deadline from a delivery attempt');
+          await reader.advance(1000);
+          await reader.click('[data-action=pause]'); await reader.click('[data-action=resume]'); await reader.advance(1000);
+          assert.equal(await reader.evaluate('cueCalls.length'), expectedAttempts, 'A delayed or delivered cue must not replay');
+          await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+          assert.equal((await reader.data()).active.activeMs, deadline + writeDelay + 2000,
+            'Suppressing stale output must retain reading time spent in persistence');
+        } finally { await close(reader); }
+      }
+    }
   });
   await test('a failed deadline checkpoint suppresses delivery and preserves an honest attempt flag', async () => {
     const failed = await page(await context());

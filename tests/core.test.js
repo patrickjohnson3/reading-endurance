@@ -77,6 +77,22 @@ test('deadline and delivery attempt are distinct when off, hidden, resumed, late
   }
 });
 
+test('cue eligibility is rechecked against fresh clocks without changing reading time', () => {
+  for (const type of ['confidence', 'target']) {
+    const { session, clock } = live({ target: 3, targetCue: true, confidenceEnabled: type === 'confidence' });
+    const deadline = type === 'confidence' ? 120000 : 180000;
+    clock.sample(deadline - 1000, 1000000 + deadline - 1000);
+    assert.deepEqual(clock.sample(deadline, 1000000 + deadline), [type]);
+    const sampled = structuredClone(session);
+    assert.equal(clock.isCuePunctual(type, deadline + 1500, 1000000 + deadline + 1500), true);
+    assert.equal(clock.isCuePunctual(type, deadline + 1501, 1000000 + deadline + 1501), false);
+    assert.equal(clock.isCuePunctual(type, deadline, 1000000 + deadline + 2001), false, 'Clock ambiguity must prevent delivery');
+    assert.deepEqual(session, sampled, 'A delivery check must not advance or freeze the reading clock');
+    clock.finish(deadline + 1000, 1000000 + deadline + 1000);
+    assert.equal(clock.isCuePunctual(type, deadline + 1000, 1000000 + deadline + 1000), false);
+  }
+});
+
 test('paused time cannot cross the confidence deadline', () => {
   const { session, clock } = live();
   clock.pause(119000, 1119000);
