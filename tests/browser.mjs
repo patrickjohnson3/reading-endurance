@@ -17,6 +17,7 @@ let chrome;
 let cdp;
 let updateVersion = false;
 let serverOffline = false;
+const SECOND_INSTALLATION_PATH = '/other-installation/';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
 class CDP {
@@ -151,7 +152,8 @@ try {
   server = createServer(async (request, response) => {
     if (serverOffline) { request.socket.destroy(); return; }
     try {
-      const path = new URL(request.url, 'http://localhost').pathname;
+      const pathname = new URL(request.url, 'http://localhost').pathname;
+      const path = pathname.startsWith(SECOND_INSTALLATION_PATH) ? pathname.slice(SECOND_INSTALLATION_PATH.length - 1) : pathname;
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
@@ -564,6 +566,44 @@ try {
     assert.equal(recovered.activeMs, 120000);
     assert.equal(recovered.uncertain, true);
     assert.equal(recovered.interruptions, 1);
+  });
+  await test('installations at different paths share ownership and preserve pending state through handoff', async () => {
+    const shared = await context();
+    let primary = await page(shared);
+    let secondary;
+    try {
+      await primary.set('#setup-cue', 'off'); await primary.click('#setup-form [type=submit]');
+      await primary.click('#start-form [type=submit]'); await primary.wait('#timer'); await primary.advance(60000);
+      await primary.click('[data-action=pause]'); await primary.wait('[data-action=resume]');
+      const pending = await primary.data();
+      secondary = await page(shared, false, origin + SECOND_INSTALLATION_PATH);
+      assert.match(await secondary.text(), /Open in another tab/);
+      assert.deepEqual(await secondary.data(), pending, 'Both paths must see the same store without creating another read');
+      await until(() => secondary.evaluate('navigator.serviceWorker.getRegistration("./").then(r => r?.scope === location.href && r.active?.state === "activated")'), 'second installation worker activates');
+      await secondary.send('Page.reload'); await secondary.wait('[data-action=retry-lock]');
+      assert.equal(await secondary.evaluate('navigator.serviceWorker.controller?.scriptURL'), new URL('sw.js', origin + SECOND_INSTALLATION_PATH).href);
+      await secondary.click('[data-action=retry-lock]');
+      assert.match(await secondary.text(), /Open in another tab/);
+      assert.deepEqual(await primary.data(), pending, 'A rejected retry must preserve the owner\'s pending read');
+      await close(primary); primary = null;
+      await until(() => secondary.evaluate('navigator.locks.query().then(locks => locks.held.length === 0)'), 'origin lock is released');
+      await secondary.click('[data-action=retry-lock]'); await secondary.wait('#recovery-form');
+      assert.deepEqual(await secondary.data(), pending, 'Handoff must load the shared checkpoint unchanged');
+      assert.equal(await secondary.evaluate('document.querySelector("#recovery-form input").value'), '1');
+      await secondary.click('#recovery-form [type=submit]'); await secondary.wait('[data-action=finish]');
+      assert.equal((await secondary.data()).active.id, pending.active.id);
+      await secondary.click('[data-action=finish]'); await secondary.click('#feedback-form [name=skip]'); await secondary.wait('#start-form');
+      const saved = await secondary.data();
+      assert.equal(saved.sessions.length, 1);
+      assert.equal(saved.sessions[0].id, pending.active.id);
+      assert.equal(saved.sessions[0].activeMs, 60000);
+      await close(secondary); secondary = null;
+      primary = await page(shared); await primary.wait('#start-form');
+      assert.deepEqual(await primary.data(), saved, 'The original path must retain the read completed at the other path');
+    } finally {
+      if (primary) await close(primary);
+      if (secondary) await close(secondary);
+    }
   });
   await test('hidden deadline does not emit a late cue on return', async () => {
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(119000);
