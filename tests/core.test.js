@@ -234,6 +234,29 @@ test('honest records exclude interrupted, uncertain and unrated reads; totals re
   assert.deepEqual(statistics([], now).continuation, { numerator: 0, denominator: 0 });
 });
 
+test('continuation includes exactly two minutes and requires at least twelve minutes', () => {
+  const now = new Date(2026, 9, 4, 12);
+  const history = [119999, 120000, 600000, 719999, 720000].map(activeMs => ({
+    activeMs, finishedAt: +now, interruptions: 0, uncertain: false, outcome: null
+  }));
+  assert.deepEqual(statistics(history, now).continuation, { numerator: 1, denominator: 4 });
+});
+
+test('weekly totals include Monday midnight through Sunday and exclude the prior Sunday', () => {
+  const now = new Date(2026, 9, 4, 12);
+  const history = [
+    new Date(2026, 8, 27, 23, 59, 59, 999),
+    new Date(2026, 8, 28),
+    new Date(2026, 9, 2, 12),
+    new Date(2026, 9, 4, 10)
+  ].map(finishedAt => ({
+    activeMs: 60000, finishedAt: +finishedAt, interruptions: 0, uncertain: false, outcome: null
+  }));
+  const stats = statistics(history, now);
+  assert.equal(stats.weekCount, 3);
+  assert.equal(stats.weekMs, 180000);
+});
+
 test('versioned schema round trip, duplicate IDs/orders, unsupported version and invalid values', () => {
   const data = emptyData();
   data.sessions = records([{}, { outcome: 'lost', engagedMinutes: null }]);
