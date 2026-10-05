@@ -250,6 +250,22 @@ test('versioned schema round trip, duplicate IDs/orders, unsupported version and
   assert.deepEqual(validateData(unknown), data);
 });
 
+test('pending read IDs cannot collide with saved reads or manual target changes', () => {
+  const data = emptyData();
+  data.sessions = records([{}]);
+  data.targetChanges = [{ kind: 'target', id: 'manual', at: 2000000, order: 2, target: 20 }];
+  data.nextOrder = 3;
+  data.active = newSession({ id: 'pending', owner: 'tab-a', mode: 'train', target: 20,
+    prescribed: 20, cue: 'off', wall: 3000000 });
+  new ReadingClock(data.active, 0, 3000000).finish(60000, 3060000);
+  assert.deepEqual(validateData(structuredClone(data)), data, 'The pending read must otherwise be valid');
+  for (const id of [data.sessions[0].id, data.targetChanges[0].id]) {
+    const invalid = structuredClone(data);
+    invalid.active.id = id;
+    assert.throws(() => validateData(invalid), /not a valid Reading Endurance/, `Pending ID ${id} must be rejected`);
+  }
+});
+
 test('blocked, unavailable, corrupt and failed storage never masquerade as a successful save', () => {
   const memory = new Map();
   const storage = { getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) };
