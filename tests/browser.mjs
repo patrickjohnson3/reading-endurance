@@ -165,7 +165,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v11`', '}v12`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v12`', '}v13`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -631,10 +631,11 @@ try {
     assert.match(await p.text(), /Changes are not saved/);
     await p.evaluate('Storage.prototype.setItem = originalSet'); await p.click('[data-action=retry-storage]');
     await p.click('[data-action=finish]'); await p.wait('#feedback-form');
-    const before = (await p.data()).sessions.length;
+    const pending = await p.data();
+    const before = pending.sessions.length;
     await p.evaluate('Storage.prototype.setItem = function() { throw new Error("quota"); };');
     await p.click('#feedback-form [name=skip]');
-    assert.equal((await p.data()).sessions.length, before);
+    assert.deepEqual(await p.data(), pending, 'A failed Save must retain the complete pending model');
     assert.equal(await p.has('#feedback-form'), true);
     await p.evaluate('Storage.prototype.setItem = originalSet');
     await p.evaluate('const saveButton = document.querySelector("#feedback-form [name=skip]"); saveButton.click(); saveButton.click();');
@@ -787,7 +788,19 @@ try {
     assert.equal(await p.has('#feedback-form'), true);
     await p.set('input[name=corrected]', '3'); await p.click('input[value=lost]'); await p.set('input[name=estimate]', '2.9');
     assert.equal(await p.evaluate('document.querySelector("#feedback-form").checkValidity()'), true);
-    await p.set('input[name=corrected]', '1.8'); await p.click('#feedback-form [name=skip]'); await p.wait('#start-form');
+    await p.set('input[name=corrected]', '1.8');
+    const pending = await p.data();
+    await p.evaluate(`window.correctionOriginalSet = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) {
+        if (key === 'reading-endurance-v1') throw new Error('quota');
+        return correctionOriginalSet.call(this, key, value);
+      };`);
+    await p.click('#feedback-form [name=skip]');
+    assert.deepEqual(await p.data(), pending, 'A failed corrected Save must preserve the pending duration');
+    await p.evaluate('Storage.prototype.setItem = correctionOriginalSet'); await p.click('[data-action=retry-storage]');
+    assert.deepEqual(await p.data(), pending, 'Retry storage must not commit an unsaved duration correction');
+    assert.equal(await p.evaluate('document.querySelector("input[name=corrected]").value'), '1.8');
+    await p.click('#feedback-form [name=skip]'); await p.wait('#start-form');
     assert.equal((await p.data()).sessions.at(-1).activeMs, 108000);
     assert.equal((await p.data()).sessions.at(-1).interruptions, 1);
   });
@@ -865,10 +878,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v12')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v11')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v13')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v12')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v12'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v13'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

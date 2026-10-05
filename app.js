@@ -377,7 +377,7 @@ function saveFeedback(form, skip, editedId) {
       record.outcome = outcome; record.engagedMinutes = estimate;
       validateData(next);
     } else {
-      const data = structuredClone(db);
+      const data = db.active?.uncertain ? structuredClone(db) : db;
       if (data.active?.uncertain) {
         data.active.activeMs = Number(formData.get('corrected')) * 60000;
         data.active.interruptions = Math.max(1, data.active.interruptions);
