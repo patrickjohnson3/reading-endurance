@@ -153,7 +153,11 @@ test('two comfortable successes at a chosen target add two minutes with ceiling'
 
 test('challenging and early outcomes hold the chosen target and reset the comfortable count', () => {
   for (const middle of [{ outcome: 'challenging' }, { activeMs: 599999 }, { outcome: 'challenging', activeMs: 10000 }]) {
-    const result = recommend(10, records([{}, middle, {}]));
+    const history = records([{}, middle, {}]);
+    const held = recommend(10, history.slice(0, 2));
+    assert.equal(held.target, 10, 'A challenging or early read must hold immediately');
+    assert.equal(held.comfortableCount, 0, 'A hold must reset consecutive comfortable successes');
+    const result = recommend(10, history);
     assert.equal(result.target, 10);
     assert.equal(result.comfortableCount, 1);
   }
