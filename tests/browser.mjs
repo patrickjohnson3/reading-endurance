@@ -707,6 +707,25 @@ try {
     assert.match(await p.text(), /Recommended: 7 minutes/);
     assert.equal((await p.data()).sessions.at(-1).engagedMinutes, 7.9);
   });
+  await test('Lost the thread with a blank estimate saves null and reduces the chosen target by two', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('input[name=mode][value=train]'); await reader.click('#start-form [type=submit]');
+      await reader.wait('#timer'); await reader.advance(600000);
+      await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+      await reader.click('input[value=lost]');
+      assert.equal(await reader.evaluate('document.querySelector("input[name=estimate]").value'), '');
+      await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+      const saved = await reader.data();
+      assert.equal(saved.sessions.length, 1);
+      assert.equal(saved.sessions[0].targetMinutes, 10);
+      assert.equal(saved.sessions[0].activeMs, 600000);
+      assert.equal(saved.sessions[0].outcome, 'lost');
+      assert.equal(saved.sessions[0].engagedMinutes, null, 'An omitted estimate must stay distinct from zero');
+      assert.match(await reader.text(), /Recommended: 8 minutes/);
+    } finally { await close(reader); }
+  });
   await test('clock changes require duration confirmation; stale callbacks never cue', async () => {
     await p.click('#start-form [type=submit]'); await p.wait('#timer');
     await p.advance(119000); await p.evaluate('testClock.shift(3600000)'); await p.advance(1000);
