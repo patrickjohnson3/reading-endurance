@@ -52,14 +52,25 @@ export function statistics(sessions, now = new Date()) {
   const weekStart = new Date(now);
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - (weekStart.getDay() + 6) % 7);
-  const thisWeek = sessions.filter(s => s.finishedAt >= +weekStart && s.finishedAt <= +now);
-  const engaged = sessions.filter(s => !s.interruptions && !s.uncertain &&
-    ['comfortable', 'challenging'].includes(s.outcome));
-  const longest = outcome => Math.max(0, ...engaged.filter(s => s.outcome === outcome).map(s => s.activeMs));
-  const eligible = sessions.filter(s => s.activeMs >= 120000);
-  return { weekMs: thisWeek.reduce((sum, s) => sum + s.activeMs, 0), weekCount: thisWeek.length,
-    comfortableMs: longest('comfortable'), challengingMs: longest('challenging'),
-    continuation: { numerator: eligible.filter(s => s.activeMs >= 720000).length, denominator: eligible.length } };
+  const weekStartMs = +weekStart;
+  const nowMs = +now;
+  const result = { weekMs: 0, weekCount: 0, comfortableMs: 0, challengingMs: 0,
+    continuation: { numerator: 0, denominator: 0 } };
+  for (const s of sessions) {
+    if (s.finishedAt >= weekStartMs && s.finishedAt <= nowMs) {
+      result.weekMs += s.activeMs;
+      result.weekCount++;
+    }
+    if (!s.interruptions && !s.uncertain) {
+      if (s.outcome === 'comfortable') result.comfortableMs = Math.max(result.comfortableMs, s.activeMs);
+      else if (s.outcome === 'challenging') result.challengingMs = Math.max(result.challengingMs, s.activeMs);
+    }
+    if (s.activeMs >= 120000) {
+      result.continuation.denominator++;
+      if (s.activeMs >= 720000) result.continuation.numerator++;
+    }
+  }
+  return result;
 }
 
 export function newSession({ id, owner, mode, target, prescribed, cue, confidenceEnabled = true, targetCue = false, wall }) {
