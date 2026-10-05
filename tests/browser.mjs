@@ -165,7 +165,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v15`', '}v16`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v16`', '}v17`'));
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -914,10 +914,10 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v16')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v15')));
+    assert.ok(cacheKeys.some(k => k.endsWith(':v17')));
+    assert.ok(!cacheKeys.some(k => k.endsWith(':v16')));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v16'));
+    const updatedCache = cacheKeys.find(key => key.endsWith(':v17'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

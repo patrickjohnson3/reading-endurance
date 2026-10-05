@@ -336,10 +336,11 @@ These callbacks do not count seconds.
 
 Finish samples once with cues disabled, freezes `activeMs` and `finishedAt`,
 cancels output, attempts persistence, and renders feedback. `completeSession()`
-clones the accepted model into a Save candidate. Only a duration correction needs
-a preliminary copy before completion. Only a successful write replaces the app's
-model and announces success. Editing feedback follows the same clone/validate/write boundary. History
-changes are reflected by replay, rather than patching a cached recommendation.
+clones the accepted model, including signal objects, into an independent Save
+candidate. Only a duration correction needs a preliminary copy before completion.
+Only a successful write replaces the app's model and announces success. Editing
+feedback follows the same clone/validate/write boundary. History changes are
+reflected by replay, rather than patching a cached recommendation.
 
 ### Browser lifecycle events
 
@@ -623,10 +624,10 @@ by the browser's worker update mechanism, not included in that asset cache.
   ordinarily controls a subsequent load; an upgrade waits for old controlled tabs
   to close.
 
-The current worker suffix is `v15`; this is independent of JSON schema version 1
+The current worker suffix is `v16`; this is independent of JSON schema version 1
 and package version 0.1.0. When changing shell files, coordinate asset references,
 `SHELL`, the cache version, and the browser upgrade fixture. That fixture currently
-serves v15, then substitutes v16 and a changed CSS marker. README-only changes do
+serves v16, then substitutes v17 and a changed CSS marker. README-only changes do
 not change a shell asset and need no cache bump.
 
 `manifest.webmanifest` uses `./` for ID, start URL, and scope, with standalone

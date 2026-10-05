@@ -159,6 +159,24 @@ test('duplicate completion cannot duplicate records, feedback estimates are opti
   assert.equal(completeSession({ ...saved, active: session }, 'lost', null), null);
 });
 
+test('completed candidates and pending sessions own independent signal state', () => {
+  const data = emptyData();
+  const { session, clock } = live({ target: 2, targetCue: true });
+  data.active = session;
+  clock.finish(121000, 1121000);
+  const pending = structuredClone(data);
+  const candidate = completeSession(data, 'comfortable', null);
+  assert.deepEqual(data, pending, 'Preparing completion must leave accepted data unchanged');
+  for (const field of ['confidence', 'targetSignal']) {
+    data.active[field].attempted = true;
+    assert.deepEqual(candidate.sessions[0][field], pending.active[field],
+      `Changing pending ${field} must not change the completed candidate`);
+    candidate.sessions[0][field].suppressed = true;
+    assert.equal(data.active[field].suppressed, false,
+      `Changing completed ${field} must not change the pending read`);
+  }
+});
+
 test('two comfortable successes at a chosen target add two minutes with ceiling', () => {
   assert.equal(recommend(10, records([{}])).target, 10);
   assert.equal(recommend(10, records([{}, {}])).target, 12);

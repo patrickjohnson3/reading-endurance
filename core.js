@@ -168,7 +168,7 @@ export function completeSession(data, outcome, engagedMinutes) {
   if (estimate !== null && (!Number.isFinite(estimate) || estimate < 0 || estimate * 60000 > s.activeMs + 0.001))
     throw new Error('The estimate must fit within the recorded reading time.');
   const copy = structuredClone(data);
-  const { owner, checkpointAt, state, ...record } = s;
+  const { owner, checkpointAt, state, ...record } = copy.active;
   copy.sessions.push({ ...record, kind: 'session', order: copy.nextOrder++, outcome, engagedMinutes: estimate });
   copy.active = null;
   return copy;
