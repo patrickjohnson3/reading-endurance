@@ -169,11 +169,27 @@ test('lost thread uses floor of supplied estimate, bounds at two and chosen targ
 });
 
 test('ineligible sessions hold recommendation, break success count, and do not regress', () => {
-  for (const middle of [{ interruptions: 1 }, { uncertain: true }, { outcome: 'external' },
-    { outcome: null }, { mode: 'start', targetMinutes: null }, { mode: 'free', targetMinutes: null }]) {
-    const result = recommend(10, records([{}, { ...middle, activeMs: 10000, targetMinutes: middle.targetMinutes ?? 2 }, {}]));
-    assert.equal(result.target, 10);
-    assert.equal(result.comfortableCount, 1);
+  for (const [reason, excluded] of [
+    ['interrupted', { interruptions: 1 }], ['uncertain', { uncertain: true }],
+    ['external stop', { outcome: 'external' }], ['unrated', { outcome: null }],
+    ['two-minute start', { mode: 'start', targetMinutes: null, prescribedTarget: null }],
+    ['just read', { mode: 'free', targetMinutes: null, prescribedTarget: null }]
+  ]) {
+    for (const reading of [
+      { outcome: 'comfortable', activeMs: 1200000, targetMinutes: 20, engagedMinutes: null },
+      { outcome: 'lost', activeMs: 600000, targetMinutes: 20, engagedMinutes: 3 }
+    ]) {
+      const middle = { ...reading, ...excluded, startedAt: 4000000 - reading.activeMs, finishedAt: 4000000,
+        targetSignal: { passed: reading.activeMs >= 1200000, attempted: false, suppressed: false } };
+      if (middle.outcome !== 'lost') middle.engagedMinutes = null;
+      if (middle.mode && middle.mode !== 'train') middle.targetSignal = { passed: false, attempted: false, suppressed: false };
+      const history = records([{}, middle, { startedAt: 4400000, finishedAt: 5000000 }]);
+      validateData({ ...emptyData(), sessions: history, nextOrder: 4 });
+      assert.deepEqual(recommend(10, history.slice(0, 2)), { target: 10, comfortableCount: 0, countTarget: null },
+        `${reason} must hold the existing recommendation after ${reading.outcome}`);
+      assert.deepEqual(recommend(10, history), { target: 10, comfortableCount: 1, countTarget: 10 },
+        `${reason} must break consecutive successes`);
+    }
   }
 });
 
