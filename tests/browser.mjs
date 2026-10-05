@@ -543,8 +543,15 @@ try {
     const other = await page(contextId);
     assert.match(await other.text(), /Open in another tab/);
     await close(other);
-    await p.send('Page.reload'); await p.wait('#recovery-form');
+    // Shift only the next document, after the outgoing page can checkpoint its last active minute.
+    const { identifier } = await p.send('Page.addScriptToEvaluateOnNewDocument', { source: 'testClock.shift(10800000)' });
+    try {
+      await p.send('Page.reload'); await p.wait('#recovery-form');
+    } finally { await p.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }); }
+    assert.equal(await p.evaluate('Date.now() - JSON.parse(localStorage.getItem("reading-endurance-v1")).active.checkpointAt'), 10800000,
+      'Recovery must exercise a checkpoint three hours older than the new document');
     assert.equal((await p.data()).active.activeMs, 60000);
+    assert.equal(await p.evaluate('document.querySelector("#recovery-form input").value'), '1', 'Closed time must not inflate the recovery default');
     await p.set('#recovery-form input', '1.5'); await p.click('#recovery-form [type=submit]');
     await p.wait('[data-action=resume]');
     assert.equal((await p.data()).active.activeMs, 90000);
@@ -553,7 +560,10 @@ try {
     assert.equal(await p.evaluate('cueCalls.length'), 0);
     await p.click('[data-action=finish]'); await p.wait('#feedback-form');
     await p.click('#feedback-form [name=skip]'); await p.wait('#start-form');
-    assert.equal((await p.data()).sessions.at(-1).uncertain, true);
+    const recovered = (await p.data()).sessions.at(-1);
+    assert.equal(recovered.activeMs, 120000);
+    assert.equal(recovered.uncertain, true);
+    assert.equal(recovered.interruptions, 1);
   });
   await test('hidden deadline does not emit a late cue on return', async () => {
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(119000);
