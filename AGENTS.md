@@ -49,6 +49,8 @@ boundary and retain coverage for pause arithmetic, deadline crossing, duplicate
 completion, recovery, storage failures, overrides, and edited/deleted history.
 Browser changes must retain the start/finish/feedback/next-recommendation flow,
 cross-tab exclusion, offline pending-feedback reload, and safe update checks.
+Give unrelated new browser scenarios their own contexts; keep intentionally
+dependent workflows in one named scenario with explicit setup.
 
 For UI changes, inspect Android portrait/landscape and desktop layouts, keyboard
 focus, accessible names, touch targets, and overflow. Keep the ticking timer's

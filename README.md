@@ -721,6 +721,9 @@ node --test --experimental-test-isolation=none --test-name-pattern='pause' tests
 This is a subset, not a replacement for the canonical checks. The browser harness
 runs sequentially, with several cases sharing earlier UI state; it currently has
 no documented per-case filter.
+The Train/feedback-edit/delete journey creates its own history in an isolated
+context and can run without earlier cases. New unrelated scenarios should also
+own their context; keep deliberate workflow dependencies within a named scenario.
 
 To retain screenshots outside the temporary profile:
 

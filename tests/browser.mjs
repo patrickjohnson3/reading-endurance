@@ -466,34 +466,41 @@ try {
     assert.equal((await p.data()).sessions[0].outcome, null);
     assert.equal((await p.data()).sessions[0].activeMs, 125000);
   });
-  await test('Train reaches target without stopping; two successes update recommendation', async () => {
-    for (let i = 0; i < 2; i++) {
-      await p.click('input[name=mode][value=train]'); await p.set('#session-target', '2');
-      assert.equal(await p.evaluate('document.querySelector("#target-cue").disabled'), true);
-      await p.click('#start-form [type=submit]'); await p.wait('#timer');
-      await p.advance(119000); await p.advance(1000);
-      assert.equal((await p.data()).active.state, 'running');
-      assert.equal((await p.data()).active.targetSignal.attempted, false);
-      await p.click('[data-action=finish]'); await p.wait('#feedback-form');
-      await p.click('input[value=comfortable]'); await p.click('#feedback-form .primary'); await p.wait('#start-form');
-    }
-    assert.match(await p.text(), /Recommended: 4 minutes/);
-    const records = (await p.data()).sessions;
-    assert.equal(records[1].prescribedTarget, 10);
-    assert.equal(records[1].targetMinutes, 2);
-  });
-  await test('edit and delete replay recommendations, progress has honest labeled history', async () => {
-    await p.click('[data-view=progress]');
-    assert.equal(await p.evaluate('document.querySelector(".metric strong").textContent'), '4 min');
-    assert.match(await p.text(), /0 of 3 completed reads/);
-    assert.doesNotMatch(await p.text(), /0%/);
-    await p.click('.history [data-action=edit]');
-    await p.click('#edit-form input[value=challenging]'); await p.click('#edit-form .primary');
-    assert.equal(await p.evaluate('document.querySelector(".metric strong").textContent'), '2 min');
-    await p.click('.history [data-action=delete]'); await p.click('#confirm-form [type=submit]');
-    assert.equal((await p.data()).sessions.length, 2);
-    const shot = await p.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
-    await writeFile(join(screenshots, 'progress-portrait.png'), Buffer.from(shot.data, 'base64'));
+  await test('independent Train journey reaches targets, advances recommendations and replays edits/deletion', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.wait('#setup-form'); await reader.click('#setup-form [type=submit]'); await reader.wait('#start-form');
+      // This journey creates its own unrated read instead of inheriting another test's history.
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer'); await reader.advance(125000);
+      await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+      await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+      for (let i = 0; i < 2; i++) {
+        await reader.click('input[name=mode][value=train]'); await reader.set('#session-target', '2');
+        assert.equal(await reader.evaluate('document.querySelector("#target-cue").disabled'), true);
+        await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+        await reader.advance(119000); await reader.advance(1000);
+        assert.equal((await reader.data()).active.state, 'running');
+        assert.equal((await reader.data()).active.targetSignal.attempted, false);
+        await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+        await reader.click('input[value=comfortable]'); await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+      }
+      assert.match(await reader.text(), /Recommended: 4 minutes/);
+      const trains = (await reader.data()).sessions.filter(s => s.mode === 'train');
+      assert.equal(trains.length, 2);
+      assert.equal(trains[0].prescribedTarget, 10);
+      assert.equal(trains[0].targetMinutes, 2);
+      await reader.click('[data-view=progress]');
+      assert.equal(await reader.evaluate('document.querySelector(".metric strong").textContent'), '4 min');
+      assert.match(await reader.text(), /0 of 3 completed reads/);
+      assert.doesNotMatch(await reader.text(), /0%/);
+      await reader.click('.history [data-action=edit]');
+      await reader.click('#edit-form input[value=challenging]'); await reader.click('#edit-form .primary');
+      assert.equal(await reader.evaluate('document.querySelector(".metric strong").textContent'), '2 min');
+      await reader.click('.history [data-action=delete]'); await reader.click('#confirm-form [type=submit]');
+      assert.equal((await reader.data()).sessions.length, 2);
+      const shot = await reader.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+      await writeFile(join(screenshots, 'progress-portrait.png'), Buffer.from(shot.data, 'base64'));
+    } finally { await close(reader); }
   });
   await test('history action names and deletion identify the selected read', async () => {
     const history = await page(await context());
