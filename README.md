@@ -244,6 +244,7 @@ for a backup or a background timer.
 | [manifest.webmanifest](manifest.webmanifest) | Relative app identity, start URL/scope, standalone display mode, colors, and install icons. |
 | [icons/](icons/) | Checked-in SVG and 192/512-pixel PNG assets; no icon-generation script is tracked. |
 | [tests/core.test.js](tests/core.test.js) | Node tests for rules, clocks, recovery, schema, and storage errors. |
+| [tests/fixtures/reading-endurance-v1.json](tests/fixtures/reading-endurance-v1.json) | Frozen synthetic v1 export covering saved reads, manual changes, and a recovered pending read. Compatibility evidence independent of current constructors. |
 | [tests/browser.mjs](tests/browser.mjs) | Chrome DevTools Protocol harness, temporary HTTP server, controlled clocks, UI assertions, screenshots, and offline/update checks. |
 | [package.json](package.json) | Private package metadata, native ES-module mode, and canonical development commands. |
 | [.gitignore](.gitignore) | Excludes dependency directories, test results, and logs. |
@@ -451,6 +452,12 @@ There is no SQL database, IndexedDB store, backend schema, or migration framewor
 `LocalStore` serializes one versioned JSON document under localStorage key
 `reading-endurance-v1`. Its injected interface needs only `getItem(key)` and
 `setItem(key, value)`; unit tests provide an in-memory implementation.
+The key's `v1` suffix is historical: it identifies the reading store and its
+matching Web Lock, independently of the document's schema version. A schema
+upgrade must retain this identity unless it explicitly discovers old data and
+coordinates with older clients. Renaming the key alone would make old data appear
+absent and create a different lock. No migration is implemented while v1 remains
+the only supported format.
 
 `emptyData()` produces this valid empty document. It is a schema example, not
 starter reading history:

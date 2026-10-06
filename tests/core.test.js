@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { newSession, ReadingClock, recoverSession, completeSession, recommend, statistics,
   emptyData, validateData, LocalStore, STORAGE_KEY } from '../core.js';
 
@@ -289,6 +290,22 @@ test('weekly totals include Monday midnight through Sunday and exclude the prior
   const stats = statistics(history, now);
   assert.equal(stats.weekCount, 3);
   assert.equal(stats.weekMs, 180000);
+});
+
+test('frozen v1 exports retain their storage identity, records and replay behavior', () => {
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/reading-endurance-v1.json', import.meta.url), 'utf8'));
+  const memory = new Map([['reading-endurance-v1', JSON.stringify(fixture)]]);
+  const store = new LocalStore({ getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) });
+  const loaded = store.load();
+  assert.equal(STORAGE_KEY, 'reading-endurance-v1', 'Schema versions must preserve the established data/lock identity');
+  assert.deepEqual(loaded, fixture, 'Loading must preserve the historical format without current constructors');
+  assert.equal(recommend(loaded.settings.initialTarget, loaded.sessions, loaded.targetChanges).target, 7);
+  store.save(loaded);
+  assert.deepEqual(JSON.parse(memory.get('reading-endurance-v1')), fixture, 'Saving must retain every accepted field');
+  const unsupported = JSON.stringify({ ...fixture, version: 2 });
+  memory.set('reading-endurance-v1', unsupported);
+  assert.throws(() => store.load());
+  assert.equal(memory.get('reading-endurance-v1'), unsupported, 'Unsupported data must stay available for export');
 });
 
 test('versioned schema round trip, duplicate IDs/orders, unsupported version and invalid values', () => {

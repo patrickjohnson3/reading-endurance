@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "nextOrder": 6,
+  "settings": { "setup": true, "initialTarget": 10, "cue": "vibration" },
+  "sessions": [
+    {
+      "id": "legacy-start", "kind": "session", "order": 1,
+      "mode": "start", "startedAt": 1700000000000, "finishedAt": 1700000125000,
+      "activeMs": 125000, "interruptions": 0, "uncertain": false,
+      "prescribedTarget": null, "targetMinutes": null, "cue": "vibration",
+      "confidenceEnabled": true, "targetCue": false,
+      "confidence": { "passed": true, "attempted": true, "suppressed": false },
+      "targetSignal": { "passed": false, "attempted": false, "suppressed": false },
+      "outcome": "comfortable", "engagedMinutes": null
+    },
+    {
+      "id": "legacy-train-override", "kind": "session", "order": 2,
+      "mode": "train", "startedAt": 1700000200000, "finishedAt": 1700001400000,
+      "activeMs": 1200000, "interruptions": 0, "uncertain": false,
+      "prescribedTarget": 10, "targetMinutes": 20, "cue": "sound",
+      "confidenceEnabled": false, "targetCue": true,
+      "confidence": { "passed": true, "attempted": false, "suppressed": false },
+      "targetSignal": { "passed": true, "attempted": true, "suppressed": false },
+      "outcome": "challenging", "engagedMinutes": null
+    },
+    {
+      "id": "legacy-lost", "kind": "session", "order": 4,
+      "mode": "train", "startedAt": 1700001600000, "finishedAt": 1700002200000,
+      "activeMs": 600000, "interruptions": 0, "uncertain": false,
+      "prescribedTarget": 30, "targetMinutes": 30, "cue": "off",
+      "confidenceEnabled": true, "targetCue": false,
+      "confidence": { "passed": true, "attempted": false, "suppressed": false },
+      "targetSignal": { "passed": false, "attempted": false, "suppressed": false },
+      "outcome": "lost", "engagedMinutes": 7.75
+    },
+    {
+      "id": "legacy-interrupted", "kind": "session", "order": 5,
+      "mode": "free", "startedAt": 1700002300000, "finishedAt": 1700002900000,
+      "activeMs": 180000, "interruptions": 1, "uncertain": false,
+      "prescribedTarget": null, "targetMinutes": null, "cue": "vibration",
+      "confidenceEnabled": true, "targetCue": false,
+      "confidence": { "passed": true, "attempted": false, "suppressed": false },
+      "targetSignal": { "passed": false, "attempted": false, "suppressed": false },
+      "outcome": null, "engagedMinutes": null
+    }
+  ],
+  "targetChanges": [
+    { "kind": "target", "id": "legacy-target", "at": 1700001500000, "order": 3, "target": 30 }
+  ],
+  "active": {
+    "id": "legacy-pending", "owner": "legacy-tab", "mode": "train", "state": "paused",
+    "startedAt": 1700003000000, "checkpointAt": 1700003300000, "finishedAt": null,
+    "activeMs": 90000, "interruptions": 1, "uncertain": true,
+    "prescribedTarget": 7, "targetMinutes": 7, "cue": "vibration",
+    "confidenceEnabled": true, "targetCue": false,
+    "confidence": { "passed": false, "attempted": false, "suppressed": true },
+    "targetSignal": { "passed": false, "attempted": false, "suppressed": true }
+  }
+}

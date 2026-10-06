@@ -20,6 +20,7 @@ self-reported engagement as measured comprehension or cognitive/medical benefit.
 | `sw.js` | Scoped offline app-shell caching only; never use it to schedule reading cues or store reading history. |
 | `manifest.webmanifest`, `icons/` | Install metadata and checked-in SVG/PNG assets. Preserve valid paths and the declared 192/512-pixel PNG dimensions. There is no tracked icon-generation script. |
 | `tests/core.test.js` | Node built-in tests with explicit clocks and injected storage. |
+| `tests/fixtures/` | Frozen synthetic export formats for compatibility tests. Do not regenerate historical fixtures from current constructors or rewrite them to accommodate schema changes. |
 | `tests/browser.mjs` | Dependency-free Chrome DevTools Protocol checks through the actual UI, using isolated browser contexts and a temporary profile. |
 | `README.md` | Authoritative behavior, timing/schema explanations, run instructions, and device-verification limitations. |
 
@@ -71,6 +72,9 @@ remaining device checks as described in the README.
 - Coordinate schema changes across `VERSION`, `STORAGE_KEY`, `validateData()`,
   import/export handling, tests, and README documentation. Preserve old/unreadable
   data with an explicit unsupported-data path rather than silently resetting it.
+  Keep the established `reading-endurance-v1` storage key and matching Web Lock
+  identity stable across schema versions; the suffix is historical. A namespace
+  change requires explicit data discovery and coordination with older clients.
 
 ## Critical invariants
 
