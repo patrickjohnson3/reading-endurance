@@ -117,9 +117,10 @@ remaining device checks as described in the README.
   scope prefix. Keep `SHELL`, relative imports, and manifest/icon paths in sync
   when adding or removing application assets. Never add `skipWaiting` or forced
   reloads that disrupt reading or pending feedback. Bump the cache version for
-  releases with changed shell files;
-  update the hardcoded old/new-version fixture and assertions in
-  `tests/browser.mjs` when changing that version or its spelling.
+  releases with changed shell files. The browser upgrade fixture derives its
+  initial suffix from the worker and appends a synthetic update suffix; update
+  its extraction if the cache declaration format changes. Keep the expected
+  runtime asset list independent of `SHELL`.
 
 ## Repository hygiene and change scope
 

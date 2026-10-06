@@ -8,6 +8,13 @@ import { resolve, join, extname } from 'node:path';
 import { once } from 'node:events';
 
 const root = resolve(import.meta.dirname, '..');
+const workerSource = await readFile(join(root, 'sw.js'), 'utf8');
+const cacheDeclaration = workerSource.match(/^const CACHE = `\$\{CACHE_PREFIX\}([^`]+)`;$/m);
+assert.ok(cacheDeclaration, 'The worker must declare a scoped cache suffix for the upgrade fixture');
+const cacheSuffix = cacheDeclaration[1];
+const upgradedCacheSuffix = `${cacheSuffix}-test-update`;
+const upgradedWorkerSource = workerSource.replace(cacheDeclaration[0], 'const CACHE = `${CACHE_PREFIX}' + upgradedCacheSuffix + '`;');
+assert.notEqual(upgradedWorkerSource, workerSource, 'The upgrade fixture must change the worker');
 let profile;
 let screenshots;
 let server;
@@ -165,7 +172,7 @@ try {
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
       let contents = await readFile(file);
-      if (path === '/sw.js' && updateVersion) contents = Buffer.from(contents.toString().replace('}v16`', '}v17`'));
+      if (path === '/sw.js' && updateVersion) contents = Buffer.from(upgradedWorkerSource);
       if (path === '/style.css' && updateVersion) contents = Buffer.from(`${contents}\n:root { --reading-test-shell: upgraded; }\n`);
       response.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
       response.end(contents);
@@ -892,8 +899,11 @@ try {
     await p.click('[data-view=read]');
   });
   await test('offline reload retains feedback; updates wait and deliver a complete changed shell', async () => {
+    const initialCache = `reading-endurance:${origin}/:${cacheSuffix}`;
+    const updatedCache = `reading-endurance:${origin}/:${upgradedCacheSuffix}`;
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !!r?.active)'), 'service worker activation');
     await p.send('Page.reload'); await p.wait('#start-form');
+    assert.ok((await p.evaluate('caches.keys()')).includes(initialCache), 'First load must install the current worker cache');
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(30000);
     updateVersion = true;
     await p.evaluate('navigator.serviceWorker.getRegistration().then(r => r.update())');
@@ -914,10 +924,9 @@ try {
     await p.wait('#start-form');
     await until(() => p.evaluate('navigator.serviceWorker.getRegistration().then(r => !r.waiting && r.active?.state === "activated")'), 'update activates after close');
     const cacheKeys = await p.evaluate('caches.keys()');
-    assert.ok(cacheKeys.some(k => k.endsWith(':v17')));
-    assert.ok(!cacheKeys.some(k => k.endsWith(':v16')));
+    assert.ok(cacheKeys.includes(updatedCache));
+    assert.ok(!cacheKeys.includes(initialCache));
     assert.ok(cacheKeys.includes('unrelated-fixture'), 'Unrelated caches are retained');
-    const updatedCache = cacheKeys.find(key => key.endsWith(':v17'));
     const cachedUrls = await p.evaluate(`caches.open(${JSON.stringify(updatedCache)}).then(cache => cache.keys()).then(requests => requests.map(request => request.url).sort())`);
     // These are required by the runtime entrypoints, independently of the worker's shell list.
     const requiredUrls = ['./', './index.html', './style.css', './app.js', './core.js',

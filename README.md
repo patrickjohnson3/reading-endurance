@@ -631,11 +631,15 @@ by the browser's worker update mechanism, not included in that asset cache.
   ordinarily controls a subsequent load; an upgrade waits for old controlled tabs
   to close.
 
-The current worker suffix is `v16`; this is independent of JSON schema version 1
-and package version 0.1.0. When changing shell files, coordinate asset references,
-`SHELL`, the cache version, and the browser upgrade fixture. That fixture currently
-serves v16, then substitutes v17 and a changed CSS marker. README-only changes do
-not change a shell asset and need no cache bump.
+The worker's cache suffix is independent of the JSON schema and package version.
+When changing shell files, coordinate asset references, `SHELL`, and the cache
+version. The browser fixture reads the current suffix from the worker, appends
+`-test-update` for a distinct synthetic upgrade, and changes a CSS marker. It
+asserts that the substitution changed the worker and checks initial/updated cache
+identities plus an independent required-asset list. Cache version bumps require
+no repeated version-number edits in the tests or documentation. If the cache
+declaration format changes, update the fixture's checked extraction. README-only
+changes do not change a shell asset and need no cache bump.
 
 `manifest.webmanifest` uses `./` for ID, start URL, and scope, with standalone
 display mode. Installation is offered through the browser's Install app or Add to
@@ -734,9 +738,12 @@ Ordinary rerenders focus main content; reading rerenders must retain reachable
 controls and scroll position.
 
 For a shell release, inspect HTML/module/manifest references and the worker asset
-list together, bump its version, update the hardcoded upgrade substitution and
-assertions in `tests/browser.mjs`, then run the worker-enabled offline/update test.
+list together, bump its version, then run the worker-enabled offline/update test.
 Close all controlled app tabs to observe ordinary activation.
+Cache version bumps distinguish releases; they do not make a host's individual
+file updates transactional. Before a hosted release, establish how the chosen
+host will expose the complete revision of the shell files. This repository has
+no deployment step that verifies that condition.
 
 Before completing a change, review its full diff for timer/state regressions,
 misleading measurements, extra machinery, and unrelated edits. Keep artifacts out
