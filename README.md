@@ -554,8 +554,10 @@ also do not belong to the JSON schema.
 `validateData()` checks required values and relationships and returns only known
 fields. `LocalStore.load()` parses and validates; absent data returns an empty
 model, while unreadable data throws. `LocalStore.save()` validates, normalizes,
-serializes, and writes before returning. There is no automatic migration or
-fallback that overwrites an unsupported document.
+serializes, and writes a snapshot without changing its input or returning a model.
+It throws on validation or storage failure. Callers retain ownership of their
+accepted/candidate state. There is no automatic migration or fallback that
+overwrites an unsupported document.
 
 Most form actions clone `db` and call `persist(candidate)`; a failed candidate
 write leaves the accepted model unchanged and the entered form available.
@@ -563,6 +565,10 @@ Live clock transitions mutate the active in-memory object before writing; on a
 failure, it can be newer than storage. An affected running read pauses, and the UI
 shows a storage error rather than claiming durability. Retry saves the current
 model; failed form transactions still need to be submitted again.
+While running or paused, `clock.session` and `db.active` must be the same object.
+Replacing the model with a detached storage snapshot would separate clock updates
+from the displayed/persisted read. Start, recovery, and completion explicitly
+establish or clear the clock when adopting a candidate.
 
 An open dialog exposes status, errors, retry, and export controls inside the modal,
 since the page behind it is inert. Dialogs close before ownership is released;

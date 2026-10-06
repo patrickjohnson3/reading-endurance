@@ -340,6 +340,27 @@ test('pending read IDs cannot collide with saved reads or manual target changes'
   }
 });
 
+test('storage writes normalize a snapshot without taking ownership of the live model', () => {
+  const memory = new Map();
+  const store = new LocalStore({ setItem: (key, value) => memory.set(key, value) });
+  const data = emptyData();
+  const { session, clock } = live();
+  data.active = session;
+  data.extra = 'ignored root field';
+  session.extra = 'ignored active field';
+  const before = structuredClone(data);
+  const result = store.save(data);
+  assert.deepEqual(data, before, 'A write must not replace or normalize the caller-owned model');
+  const stored = JSON.parse(memory.get(STORAGE_KEY));
+  assert.equal(stored.extra, undefined);
+  assert.equal(stored.active.extra, undefined);
+  clock.sample(15000, 1015000);
+  store.save(data);
+  assert.equal(data.active.activeMs, 15000);
+  assert.equal(JSON.parse(memory.get(STORAGE_KEY)).active.activeMs, 15000, 'The next write must follow live clock updates');
+  assert.equal(result, undefined, 'The write API must not supply an alternate model for the caller to adopt');
+});
+
 test('blocked, unavailable, corrupt and failed storage never masquerade as a successful save', () => {
   const memory = new Map();
   const storage = { getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) };

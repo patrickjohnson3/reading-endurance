@@ -228,6 +228,5 @@ export class LocalStore {
   save(data) {
     const normalized = validateData(data);
     this.storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    return normalized;
   }
 }

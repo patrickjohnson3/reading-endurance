@@ -82,6 +82,9 @@ remaining device checks as described in the README.
   Web Lock's scope identical to the origin-wide storage key; do not replace it
   with a racy cross-tab flag. Persist transitions promptly and complete by ID
   without duplicate records. Confirm before replacing/discarding active state.
+  A running/paused clock must reference the same object as `db.active`.
+  `LocalStore.save()` writes a normalized snapshot without returning a model;
+  callers retain ownership of their accepted/candidate state.
 - Derive active duration from monotonic timestamp differences, excluding pauses;
   interval callbacks only refresh/checkpoint. Finish must freeze time immediately
   and remain available while paused. Recovery must require duration confirmation,

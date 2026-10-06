@@ -58,6 +58,8 @@ function persist(next = db) {
   if (!locked || corrupt) return false;
   try {
     store.save(next);
+    // A running/paused clock must reference db.active. Retain the caller's model;
+    // the normalized storage snapshot must not become a second live session.
     db = next;
     lastPersist = performance.now();
     clearError();
@@ -529,7 +531,8 @@ document.addEventListener('click', async event => {
       if (!locked) return false;
       // An explicit reset is the only write allowed over unreadable data.
       try {
-        const fresh = store.save(emptyData());
+        const fresh = emptyData();
+        store.save(fresh);
         db = fresh; corrupt = false; clearError(); clock = null; needsRecovery = false; mode = 'start'; view = 'read';
         stopCue(); render(); announce('Local data cleared.');
       } catch { showError('Storage is inaccessible. Local data could not be cleared.'); return false; }
