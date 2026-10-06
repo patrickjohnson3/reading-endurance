@@ -1,5 +1,7 @@
 # Reading Endurance
 
+**[Open the live app](https://patrickjohnson3.github.io/reading-endurance/)**
+
 A small reading timer that helps you start with two minutes or work toward a
 chosen duration. Read your own physical book or use another ebook reader; this
 app does not contain books. It works in a browser, with optional home-screen
@@ -386,8 +388,7 @@ On some platforms the monotonic clock does not advance through system sleep. A
 wall/monotonic discrepancy over two seconds marks the interval uncertain, while
 preserving monotonic arithmetic. The reader must confirm/correct duration before
 saving. This also handles device wall-clock adjustments without inflating or
-reversing duration. Remaining cues are suppressed because an apparent future
-crossing could already be stale. Timing ambiguity is retained in history.
+reversing duration. Timing ambiguity is retained in history.
 
 Confidence deadline crossing and delivery attempted are separate persisted flags.
 A deadline can pass with cues off or with no delivery. A cue is attempted at most
