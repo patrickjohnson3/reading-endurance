@@ -166,6 +166,9 @@ Just read has no target. Neither a target nor a cue stops any session. A target
 cue is separately selected for each Train read and defaults off. Confidence is
 one short pulse/tone; target is two short pulses/tones. At a two-minute target,
 confidence takes precedence; disabling confidence permits the target cue instead.
+Vibration uses 200 ms pulses, with a 100 ms gap between the target's two pulses.
+The web API controls duration, not vibration intensity; strength depends on the
+device and its settings. Preview uses the same pulse as the confidence cue.
 
 ## Run and validate
 

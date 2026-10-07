@@ -231,6 +231,26 @@ try {
     await p.wait('#start-form');
     assert.equal((await p.data()).settings.initialTarget, 10);
   });
+  await test('preview and timed vibration cues request longer brief pulses', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'vibration'); await reader.click('[data-action=preview]');
+      assert.equal(await reader.data(), null, 'Preview must not start or persist a read');
+      await reader.click('#setup-form [type=submit]'); await reader.wait('#start-form');
+      await reader.click('input[name=mode][value=train]'); await reader.set('#session-target', '3');
+      await reader.click('#target-cue');
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await reader.advance(119000); await reader.advance(1000);
+      await reader.advance(59000); await reader.advance(1000);
+      const expected = [200, 200, [200, 100, 200]];
+      assert.deepEqual(await reader.evaluate('cueCalls'), expected,
+        'Preview and confidence use one 200 ms pulse; target uses two with a 100 ms gap');
+      assert.equal((await reader.data()).active.state, 'running', 'Reaching the target must not stop reading');
+      await reader.advance(1000);
+      assert.deepEqual(await reader.evaluate('cueCalls'), expected, 'Longer pulses must not introduce recurring cues');
+      assert.equal(await reader.evaluate('audioCalls.contexts'), 0, 'Vibration must not substitute sound');
+    } finally { await close(reader); }
+  });
   await test('portrait layout and keyboard focus', async () => {
     assert.equal(await p.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
     const shot = await p.send('Page.captureScreenshot', { format: 'png' });

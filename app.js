@@ -263,7 +263,7 @@ async function prepareAudio() {
 function deliverCue(type, selected) {
   if (document.visibilityState !== 'visible') return false;
   try {
-    if (selected === 'vibration') return vibrationAvailable && navigator.vibrate(type === 'target' ? [45, 100, 45] : 45);
+    if (selected === 'vibration') return vibrationAvailable && navigator.vibrate(type === 'target' ? [200, 100, 200] : 200);
     if (selected !== 'sound' || audio?.state !== 'running') return false;
     const tone = offset => {
       const oscillator = audio.createOscillator();
