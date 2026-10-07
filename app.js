@@ -329,7 +329,7 @@ function syncEstimate(form) {
   const value = Number(form.elements.corrected.value);
   if (!Number.isFinite(value) || value < 0) return;
   form.elements.estimate.max = value;
-  form.querySelector('.estimate .help').textContent = `Between 0 and ${Math.floor(value * 100) / 100} minutes. Leave blank if you do not know. Stopping when you lose the thread is appropriate.`;
+  form.querySelector('.estimate .help').textContent = `Between 0 and ${value} minutes. Leave blank if you do not know. Stopping when you lose the thread is appropriate.`;
 }
 
 async function prepareAudio() {

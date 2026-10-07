@@ -1151,6 +1151,40 @@ try {
     assert.equal((await p.data()).sessions.at(-1).activeMs, 108000);
     assert.equal((await p.data()).sessions.at(-1).interruptions, 1);
   });
+  await test('corrected fractional durations show and accept the full engagement bound', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.evaluate('navigator.serviceWorker.ready');
+      await reader.send('Page.reload'); await reader.wait('#setup-form');
+      assert.equal(await reader.evaluate('!!navigator.serviceWorker.controller'), true, 'Exercise the cached app shell');
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await reader.advance(60000); await reader.evaluate('testClock.shift(60000)'); await reader.advance(1000);
+      assert.equal((await reader.data()).active.uncertain, true);
+      await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+      await reader.click('#feedback-form [value=lost]');
+      for (const [entered, expected] of [['0.29', '0.29'], ['1.13', '1.13'], ['1.137', '1.137'], ['1.130', '1.13']]) {
+        await reader.set('#feedback-form [name=corrected]', entered);
+        await reader.set('#feedback-form [name=estimate]', expected);
+        assert.equal(await reader.evaluate('document.querySelector("#feedback-form [name=estimate]").max'), expected);
+        assert.ok((await reader.evaluate('document.querySelector("#feedback-form .estimate .help").textContent')).startsWith(`Between 0 and ${expected} minutes.`), 'Visible guidance must match the valid upper bound');
+        assert.equal(await reader.evaluate('document.querySelector("#feedback-form").checkValidity()'), true);
+      }
+      await reader.set('#feedback-form [name=estimate]', '1.14');
+      assert.equal(await reader.evaluate('document.querySelector("#feedback-form").checkValidity()'), false);
+      await reader.set('#feedback-form [name=estimate]', '1.13');
+      await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+      const saved = (await reader.data()).sessions[0];
+      assert.equal(saved.activeMs, 67800, '1.13 minutes is exactly 67.8 seconds');
+      assert.equal(saved.engagedMinutes, 1.13);
+      assert.equal(saved.outcome, 'lost');
+      assert.equal(saved.uncertain, true);
+      assert.equal(saved.interruptions, 1);
+      await reader.click('[data-view=progress]'); await reader.click('[data-action=edit]'); await reader.wait('#edit-form');
+      assert.equal(await reader.evaluate('document.querySelector("#edit-form [name=estimate]").max'), '1.13');
+      assert.ok((await reader.evaluate('document.querySelector("#edit-form .estimate .help").textContent')).startsWith('Between 0 and 1.13 minutes.'));
+    } finally { await close(reader); }
+  });
   await test('only the latest selected import can show confirmation or errors', async () => {
     for (const olderValid of [true, false]) {
       const reader = await page(await context());
