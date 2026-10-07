@@ -31,10 +31,12 @@ let dialogReturnFocus;
 let importSequence = 0;
 let screenWakeLock = null;
 let screenWakeRequest = null;
+let numberFormatter;
+let dateTimeFormatter;
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const minutes = ms => (ms / 60000).toLocaleString(undefined, { maximumFractionDigits: 1 });
-const timestamp = time => new Date(time).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const minutes = ms => numberFormatter.format(ms / 60000);
+const timestamp = time => dateTimeFormatter.format(new Date(time));
 const readDescription = session => `${minutes(session.activeMs)} min · ${modeNames[session.mode]} · ${timestamp(session.finishedAt)}`;
 const rec = () => recommend(db.settings.initialTarget, db.sessions, db.targetChanges).target;
 function timerText(ms) {
@@ -236,12 +238,15 @@ function renderProgress() {
     ${continuation.denominator >= 2 ? `<section class="panel"><h2>Observed continuation</h2><p>${continuation.numerator} of ${continuation.denominator} completed reads with at least two active minutes reached twelve active minutes${continuation.denominator >= 5 ? ` (${Math.round(100 * continuation.numerator / continuation.denominator)}%)` : ''}.</p><p class="help">Includes reads where a cue was off, unsupported, or missed. This does not show a cue's effectiveness or what caused you to continue.</p></section>` : ''}
     <section class="panel"><h2>Reading duration, in order</h2>${shown.length ? `<p class="help">${chronological.length > 30 ? 'Latest 30 reads. ' : ''}Bars show active time. Stripes and ∥ mark interruptions.</p>
       <ol class="chart" aria-hidden="true">${shown.map(s => `<li><div class="chart-label"><span>${timestamp(s.finishedAt)}</span><span>${minutes(s.activeMs)} min ${s.interruptions || s.uncertain ? '∥' : ''}</span></div><div class="bar ${s.outcome || 'unrated'} ${s.interruptions || s.uncertain ? 'interrupted' : ''}" style="width:${100 * s.activeMs / max}%"></div><div class="chart-label">${outcomeNames[s.outcome] || 'No feedback'}${recordMarkers(s) ? ` · ${recordMarkers(s)}` : ''}</div></li>`).join('')}</ol><p class="help">The readable history below contains every chart entry.</p>` : '<p class="muted">After your first saved read, its duration and your optional engagement report will appear here.</p>'}</section>
-    <h2>History</h2>${chronological.length ? `<ol class="history">${[...chronological].reverse().map(s => `<li><div class="record-title"><strong>${minutes(s.activeMs)} min · ${modeNames[s.mode]}</strong><span>${timestamp(s.finishedAt)}</span></div>
+    <h2>History</h2>${chronological.length ? `<ol class="history">${[...chronological].reverse().map(s => {
+      const description = escape(readDescription(s));
+      return `<li><div class="record-title"><strong>${minutes(s.activeMs)} min · ${modeNames[s.mode]}</strong><span>${timestamp(s.finishedAt)}</span></div>
       <p>${outcomeNames[s.outcome] || 'No feedback'}${recordMarkers(s) ? ` · ${recordMarkers(s)}` : ''}</p>
       ${s.targetMinutes !== null ? `<p>Chosen target ${s.targetMinutes} min · Prescribed ${s.prescribedTarget} min</p>` : ''}
       ${s.engagedMinutes !== null ? `<p>Following the text: about ${s.engagedMinutes} active minutes, self-reported</p>` : ''}
       <details><summary>Cue record</summary><p>Confidence deadline: ${s.confidence.passed ? 'passed' : 'not reached'}. Delivery: ${s.confidence.attempted ? 'attempted' : 'not attempted'}. ${s.targetCue ? `Target delivery: ${s.targetSignal.attempted ? 'attempted' : 'not attempted'}.` : ''} A request does not confirm that a cue was felt or heard.</p></details>
-      <div class="actions"><button type="button" data-action="edit" data-id="${escape(s.id)}" aria-label="Edit feedback for ${escape(readDescription(s))}">Edit feedback</button><button type="button" data-action="delete" data-id="${escape(s.id)}" aria-label="Delete read: ${escape(readDescription(s))}">Delete…</button></div></li>`).join('')}</ol>` : '<p class="muted">No reads saved yet. Start with two minutes or simply read.</p>'}
+      <div class="actions"><button type="button" data-action="edit" data-id="${escape(s.id)}" aria-label="Edit feedback for ${description}">Edit feedback</button><button type="button" data-action="delete" data-id="${escape(s.id)}" aria-label="Delete read: ${description}">Delete…</button></div></li>`;
+    }).join('')}</ol>` : '<p class="muted">No reads saved yet. Start with two minutes or simply read.</p>'}
     <details><summary>How training changes</summary><p>Two consecutive uninterrupted Comfortable reads reaching the same chosen target add two minutes, up to 60. Challenging but engaged holds that target. Early stops hold it and reset the count.</p>
     <p>Lost the thread uses an optional estimate rounded down, between two minutes and the chosen target. Without an estimate, the chosen target drops by two minutes, with a two-minute minimum.</p>
     <p>Interrupted or uncertain reads, other stopping reasons, skipped feedback, and untargeted modes leave the recommendation unchanged and break the success count. Overrides start a separate count. Rest days do not change anything.</p><p>This is a product heuristic, not an attention-span measurement.</p></details>`;
@@ -266,6 +271,9 @@ function renderSettings() {
 }
 
 function render(focus = true) {
+  // Reuse formatters within a view, but pick up default locale/time-zone changes on render.
+  numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+  dateTimeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const reading = !!db.active && !needsRecovery && ['running', 'paused'].includes(db.active.state);
   document.body.classList.toggle('reading', reading);
   $('#navigation').hidden = !!db.active || !db.settings.setup || !locked || corrupt;

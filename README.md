@@ -295,6 +295,10 @@ continue to work when that content is replaced. Navigation is an in-memory
 implemented. Rendering and event selectors are therefore also contracts with the
 browser tests.
 
+Each view render initializes shared number/date formatters for its text and
+accessible names, avoiding per-record locale formatter setup. A subsequent render
+picks up changes to the browser's default locale or time zone.
+
 ## Application lifecycle and control flow
 
 ### Startup and ownership

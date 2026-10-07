@@ -268,6 +268,65 @@ try {
       assert.equal(await reader.evaluate('audioCalls.contexts'), 0, 'Vibration must not substitute sound');
     } finally { await close(reader); }
   });
+  await test('Progress preserves localized history without per-record formatter setup', async () => {
+    const fixture = JSON.parse(await readFile(join(root, 'tests/fixtures/reading-endurance-v1.json'), 'utf8'));
+    const data = { ...fixture, active: null, targetChanges: [], nextOrder: 101,
+      settings: { ...fixture.settings, cue: 'off' },
+      sessions: Array.from({ length: 100 }, (_, i) => {
+        const session = structuredClone(fixture.sessions[i % fixture.sessions.length]);
+        const finishedAt = 1700000000000 + i * 86400000;
+        return { ...session, id: `localized-${i}`, order: i + 1,
+          startedAt: finishedAt - (session.finishedAt - session.startedAt), finishedAt };
+      }) };
+    for (const [locale, timezoneId] of [['en-US', 'America/New_York'], ['de-DE', 'Europe/Berlin']]) {
+      const reader = await page(await context());
+      try {
+        await reader.send('Emulation.setLocaleOverride', { locale });
+        await reader.send('Emulation.setTimezoneOverride', { timezoneId });
+        await reader.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+          window.formatSetups = 0;
+          for (const name of ['NumberFormat', 'DateTimeFormat']) {
+            Intl[name] = new Proxy(Intl[name], { construct(target, args) {
+              formatSetups++; return Reflect.construct(target, args);
+            } });
+          }
+          // Locale-string calls perform setup too, even though their internal
+          // Intl construction does not go through the JavaScript constructors.
+          for (const type of [Date, Number]) {
+            const original = type.prototype.toLocaleString;
+            type.prototype.toLocaleString = function(...args) {
+              formatSetups++; return original.apply(this, args);
+            };
+          }` });
+        await reader.evaluate(`localStorage.setItem('reading-endurance-v1', ${JSON.stringify(JSON.stringify(data))})`);
+        await reader.send('Page.reload'); await reader.wait('#start-form');
+        for (const zone of [timezoneId, 'UTC']) {
+          await reader.send('Emulation.setTimezoneOverride', { timezoneId: zone });
+          const expected = await reader.evaluate(`Object.fromEntries(JSON.parse(localStorage.getItem('reading-endurance-v1')).sessions.map(s =>
+            [s.id, { duration: (s.activeMs / 60000).toLocaleString(undefined, { maximumFractionDigits: 1 }),
+              timestamp: new Date(s.finishedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }]))`);
+          await reader.evaluate('formatSetups = 0');
+          await reader.click('[data-view=progress]');
+          const setups = await reader.evaluate('formatSetups');
+          const rows = await reader.evaluate(`[...document.querySelectorAll('.history li')].map(row => ({
+            id: row.querySelector('[data-action=edit]').dataset.id,
+            title: row.querySelector('.record-title strong').textContent,
+            timestamp: row.querySelector('.record-title span').textContent,
+            edit: row.querySelector('[data-action=edit]').getAttribute('aria-label'),
+            remove: row.querySelector('[data-action=delete]').getAttribute('aria-label')
+          }))`);
+          assert.ok(rows.length > 0);
+          for (const row of rows) {
+            assert.ok(row.title.startsWith(`${expected[row.id].duration} min`), locale);
+            assert.equal(row.timestamp, expected[row.id].timestamp, locale);
+            assert.ok(row.edit.includes(row.title) && row.edit.includes(row.timestamp), 'Edit must retain the localized read identity');
+            assert.ok(row.remove.includes(row.title) && row.remove.includes(row.timestamp), 'Delete must retain the localized read identity');
+          }
+          assert.ok(setups <= 8, `Progress must reuse locale formatters instead of setting them up per record (${setups} setups)`);
+        }
+      } finally { await close(reader); }
+    }
+  });
   await test('screen wake preference persists and follows running, paused and visible reading', async () => {
     const reader = await page(await context(), false, origin, 'fake');
     try {
