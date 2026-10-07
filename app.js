@@ -13,10 +13,12 @@ const screenWakeAvailable = typeof navigator.wakeLock?.request === 'function';
 const Audio = window.AudioContext || window.webkitAudioContext;
 const modeNames = { start: 'Two-minute start', train: 'Train', free: 'Just read' };
 const outcomeNames = { comfortable: 'Comfortable', challenging: 'Challenging but engaged', lost: 'Lost the thread', external: 'Stopped for another reason' };
+const HISTORY_BATCH_SIZE = 30;
 let db = emptyData();
 let store;
 let clock = null;
 let view = 'read';
+let historyLimit = HISTORY_BATCH_SIZE;
 let mode = 'start';
 let locked = false;
 let acquiring = false;
@@ -223,10 +225,21 @@ function recordMarkers(s) {
   return [s.interruptions ? `∥ Interrupted (${s.interruptions})` : '', s.uncertain ? 'Uncertain duration' : ''].filter(Boolean).join(' · ');
 }
 
+function renderHistoryRecord(s) {
+  const description = escape(readDescription(s));
+  return `<li data-id="${escape(s.id)}" tabindex="-1"><div class="record-title"><strong>${minutes(s.activeMs)} min · ${modeNames[s.mode]}</strong><span>${timestamp(s.finishedAt)}</span></div>
+    <p>${outcomeNames[s.outcome] || 'No feedback'}${recordMarkers(s) ? ` · ${recordMarkers(s)}` : ''}</p>
+    ${s.targetMinutes !== null ? `<p>Chosen target ${s.targetMinutes} min · Prescribed ${s.prescribedTarget} min</p>` : ''}
+    ${s.engagedMinutes !== null ? `<p>Following the text: about ${s.engagedMinutes} active minutes, self-reported</p>` : ''}
+    <details><summary>Cue record</summary><p>Confidence deadline: ${s.confidence.passed ? 'passed' : 'not reached'}. Delivery: ${s.confidence.attempted ? 'attempted' : 'not attempted'}. ${s.targetCue ? `Target delivery: ${s.targetSignal.attempted ? 'attempted' : 'not attempted'}.` : ''} A request does not confirm that a cue was felt or heard.</p></details>
+    <div class="actions"><button type="button" data-action="edit" data-id="${escape(s.id)}" aria-label="Edit feedback for ${description}">Edit feedback</button><button type="button" data-action="delete" data-id="${escape(s.id)}" aria-label="Delete read: ${description}">Delete…</button></div></li>`;
+}
+
 function renderProgress() {
   const stats = statistics(db.sessions);
   const chronological = ordered(db.sessions);
   const shown = chronological.slice(-30);
+  const history = chronological.slice(-historyLimit).reverse();
   const max = Math.max(1, ...shown.map(s => s.activeMs));
   const continuation = stats.continuation;
   return `<p class="eyebrow">From your actual reads</p><h1>A little perspective.</h1>
@@ -238,15 +251,9 @@ function renderProgress() {
     ${continuation.denominator >= 2 ? `<section class="panel"><h2>Observed continuation</h2><p>${continuation.numerator} of ${continuation.denominator} completed reads with at least two active minutes reached twelve active minutes${continuation.denominator >= 5 ? ` (${Math.round(100 * continuation.numerator / continuation.denominator)}%)` : ''}.</p><p class="help">Includes reads where a cue was off, unsupported, or missed. This does not show a cue's effectiveness or what caused you to continue.</p></section>` : ''}
     <section class="panel"><h2>Reading duration, in order</h2>${shown.length ? `<p class="help">${chronological.length > 30 ? 'Latest 30 reads. ' : ''}Bars show active time. Stripes and ∥ mark interruptions.</p>
       <ol class="chart" aria-hidden="true">${shown.map(s => `<li><div class="chart-label"><span>${timestamp(s.finishedAt)}</span><span>${minutes(s.activeMs)} min ${s.interruptions || s.uncertain ? '∥' : ''}</span></div><div class="bar ${s.outcome || 'unrated'} ${s.interruptions || s.uncertain ? 'interrupted' : ''}" style="width:${100 * s.activeMs / max}%"></div><div class="chart-label">${outcomeNames[s.outcome] || 'No feedback'}${recordMarkers(s) ? ` · ${recordMarkers(s)}` : ''}</div></li>`).join('')}</ol><p class="help">The readable history below contains every chart entry.</p>` : '<p class="muted">After your first saved read, its duration and your optional engagement report will appear here.</p>'}</section>
-    <h2>History</h2>${chronological.length ? `<ol class="history">${[...chronological].reverse().map(s => {
-      const description = escape(readDescription(s));
-      return `<li><div class="record-title"><strong>${minutes(s.activeMs)} min · ${modeNames[s.mode]}</strong><span>${timestamp(s.finishedAt)}</span></div>
-      <p>${outcomeNames[s.outcome] || 'No feedback'}${recordMarkers(s) ? ` · ${recordMarkers(s)}` : ''}</p>
-      ${s.targetMinutes !== null ? `<p>Chosen target ${s.targetMinutes} min · Prescribed ${s.prescribedTarget} min</p>` : ''}
-      ${s.engagedMinutes !== null ? `<p>Following the text: about ${s.engagedMinutes} active minutes, self-reported</p>` : ''}
-      <details><summary>Cue record</summary><p>Confidence deadline: ${s.confidence.passed ? 'passed' : 'not reached'}. Delivery: ${s.confidence.attempted ? 'attempted' : 'not attempted'}. ${s.targetCue ? `Target delivery: ${s.targetSignal.attempted ? 'attempted' : 'not attempted'}.` : ''} A request does not confirm that a cue was felt or heard.</p></details>
-      <div class="actions"><button type="button" data-action="edit" data-id="${escape(s.id)}" aria-label="Edit feedback for ${description}">Edit feedback</button><button type="button" data-action="delete" data-id="${escape(s.id)}" aria-label="Delete read: ${description}">Delete…</button></div></li>`;
-    }).join('')}</ol>` : '<p class="muted">No reads saved yet. Start with two minutes or simply read.</p>'}
+    <h2>History</h2>${chronological.length ? `<p id="history-status" class="help" role="status">Showing ${history.length} of ${chronological.length} saved reads.</p>
+    <ol id="reading-history" class="history">${history.map(renderHistoryRecord).join('')}</ol>
+    ${history.length < chronological.length ? '<button type="button" data-action="earlier-reads" aria-controls="reading-history">Show earlier reads</button>' : ''}` : '<p class="muted">No reads saved yet. Start with two minutes or simply read.</p>'}
     <details><summary>How training changes</summary><p>Two consecutive uninterrupted Comfortable reads reaching the same chosen target add two minutes, up to 60. Challenging but engaged holds that target. Early stops hold it and reset the count.</p>
     <p>Lost the thread uses an optional estimate rounded down, between two minutes and the chosen target. Without an estimate, the chosen target drops by two minutes, with a two-minute minimum.</p>
     <p>Interrupted or uncertain reads, other stopping reasons, skipped feedback, and untargeted modes leave the recommendation unchanged and break the success count. Overrides start a separate count. Rest days do not change anything.</p><p>This is a product heuristic, not an attention-span measurement.</p></details>`;
@@ -271,6 +278,7 @@ function renderSettings() {
 }
 
 function render(focus = true) {
+  if (view !== 'progress') historyLimit = HISTORY_BATCH_SIZE;
   // Reuse formatters within a view, but pick up default locale/time-zone changes on render.
   numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
   dateTimeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -565,6 +573,23 @@ document.addEventListener('click', async event => {
   }
   if (action === 'export') { exportData(); return; }
   if (!locked) return;
+  if (action === 'earlier-reads' && view === 'progress' && !db.active && !corrupt) {
+    const list = $('#reading-history');
+    const visible = list.children.length;
+    const chronological = ordered(db.sessions);
+    const end = chronological.length - visible;
+    const batch = chronological.slice(Math.max(0, end - HISTORY_BATCH_SIZE), end).reverse();
+    if (!batch.length) return;
+    const { scrollX, scrollY } = window;
+    // Append rather than rerender so existing rows, open details, and scroll survive.
+    list.insertAdjacentHTML('beforeend', batch.map(renderHistoryRecord).join(''));
+    historyLimit = list.children.length;
+    $('#history-status').textContent = `Showing ${historyLimit} of ${chronological.length} saved reads.`;
+    if (historyLimit === chronological.length) button.hidden = true;
+    list.children[visible].focus({ preventScroll: true });
+    window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+    return;
+  }
   if (action === 'preview') {
     const selected = $(`#${button.dataset.select}`).value;
     if (selected === 'off') { announce('Cue is Off. Select vibration or sound to preview.'); return; }

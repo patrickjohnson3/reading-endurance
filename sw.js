@@ -1,6 +1,6 @@
 // A shell only. No scheduling, notifications, data caching, skipWaiting or forced reloads.
 const CACHE_PREFIX = `reading-endurance:${self.registration.scope}:`;
-const CACHE = `${CACHE_PREFIX}v20`;
+const CACHE = `${CACHE_PREFIX}v21`;
 const SHELL = ['./', './index.html', './style.css', './app.js', './core.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
 const urls = SHELL.map(path => new URL(path, self.registration.scope).href);

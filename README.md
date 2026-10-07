@@ -95,8 +95,9 @@ After saving or discarding a read, the navigation offers:
 
 - **Read** to choose a mode and start again. Train shows a recommendation with an
   override; Just read has no duration target.
-- **Progress** for reading totals and history. Each saved read has **Edit feedback**
-  and **Delete…** controls. Edits and deletions recalculate the training recommendation.
+- **Progress** for reading totals and history. **Show earlier reads** reveals older
+  history. Each saved read has **Edit feedback** and **Delete…** controls. Edits and
+  deletions recalculate the training recommendation.
 - **Settings** to change **Reading cue**, preview it, and **Save cue setting**, or
   enter a new recommendation and select **Set training target**. Cues can stay Off;
   unavailable vibration never switches to sound automatically.
@@ -463,7 +464,10 @@ reported Comfortable or Challenging but engaged, with separate records for each.
 An uninterrupted timed interval is not proof of uninterrupted attention.
 
 The chart shows the latest 30 saved reads chronologically with outcome labels and
-striped interruption markers. Accessible history contains every saved read.
+striped interruption markers. Accessible history starts with the newest 30 reads;
+**Show earlier reads** adds up to 30 older reads at a time. All totals and records
+still use the complete saved history. Editing or deleting retains the expanded
+range; leaving Progress and returning starts with the newest 30 again.
 History action names and deletion confirmations include the read's duration,
 mode, and timestamp.
 Observed continuation appears once there are two eligible reads: numerator is
@@ -572,9 +576,9 @@ every event's order is less than `nextOrder`. An active ID cannot duplicate a
 saved/manual event. Deletion leaves order gaps.
 
 Recommendations, comfortable-success counters, totals, chart widths, and longest
-records are derived, not persisted. In-memory view/mode selection, the live clock's
-monotonic baseline, audio nodes, Web Lock/wake-lock state, error state, and unsaved form values
-also do not belong to the JSON schema.
+records are derived, not persisted. In-memory view/mode selection and history range,
+the live clock's monotonic baseline, audio nodes, Web Lock/wake-lock state, error
+state, and unsaved form values also do not belong to the JSON schema.
 
 ### Validation, transactions, and data tools
 
@@ -927,8 +931,9 @@ keeps its frozen duration. Error-state export downloads the model, not those for
 drafts. Saving any mode currently announces the training recommendation without a
 session-specific explanation.
 
-Storage writes serialize the full model synchronously, recommendation replay sorts
-the full event history, and Progress renders every saved record in its history list.
+Storage writes serialize the full model synchronously and recommendation replay sorts
+the full event history. Progress initially renders 30 history records, with earlier
+records rendered when requested; its totals still calculate from the full history.
 The 50,000-entry schema bounds are validation limits, not a demonstrated performance
 guarantee on phones. No large-history performance benchmark is checked in.
 

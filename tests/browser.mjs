@@ -736,6 +736,105 @@ try {
       await writeFile(join(screenshots, 'progress-portrait.png'), Buffer.from(shot.data, 'base64'));
     } finally { await close(reader); }
   });
+  await test('Progress loads bounded history with full totals, stable order, focus and editing', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.send('Emulation.setLocaleOverride', { locale: 'en-US' });
+      await reader.send('Emulation.setTimezoneOverride', { timezoneId: 'UTC' });
+      await reader.evaluate('testClock.shift(Date.parse("2026-01-07T12:00:00Z") - Date.now())');
+      const fixture = JSON.parse(await readFile(join(root, 'tests/fixtures/reading-endurance-v1.json'), 'utf8'));
+      const chronological = Array.from({ length: 65 }, (_, i) => {
+        const session = structuredClone(fixture.sessions[i % fixture.sessions.length]);
+        const finishedAt = Date.parse('2026-01-05T12:00:00Z') + i * 1800000;
+        return { ...session, id: i === 25 ? 'history-25"<&' : `history-${i}`, order: i + 1,
+          activeMs: i === 0 ? 3600000 : session.activeMs,
+          startedAt: finishedAt - (i === 0 ? 3600000 : session.finishedAt - session.startedAt), finishedAt };
+      });
+      // Two immediate untargeted reads share a timestamp; saved order breaks the tie.
+      for (const i of [30, 31]) Object.assign(chronological[i], {
+        mode: 'free', activeMs: 0, startedAt: chronological[30].finishedAt, finishedAt: chronological[30].finishedAt,
+        prescribedTarget: null, targetMinutes: null, cue: 'off', confidenceEnabled: false, targetCue: false,
+        confidence: { passed: false, attempted: false, suppressed: false },
+        targetSignal: { passed: false, attempted: false, suppressed: false }, outcome: null, engagedMinutes: null
+      });
+      // Recent Train reads leave the recommendation unchanged; older feedback must still drive it.
+      for (const session of chronological.slice(-30)) {
+        if (session.mode === 'train') { session.outcome = 'external'; session.engagedMinutes = null; }
+      }
+      const data = { ...fixture, active: null, targetChanges: [], nextOrder: 66,
+        settings: { ...fixture.settings, cue: 'off', keepScreenAwake: false }, sessions: [...chronological].reverse() };
+      const expectedIds = chronological.map(s => s.id).reverse();
+      const totalMs = chronological.reduce((sum, s) => sum + s.activeMs, 0);
+      await reader.evaluate(`localStorage.setItem('reading-endurance-v1', ${JSON.stringify(JSON.stringify(data))})`);
+      await reader.send('Page.reload'); await reader.wait('#start-form');
+      await reader.click('[data-view=progress]');
+      const ids = () => reader.evaluate(`[...document.querySelectorAll('.history > li')].map(row => row.querySelector('[data-action=edit]').dataset.id)`);
+      assert.deepEqual(await ids(), expectedIds.slice(0, 30), 'Initial history must be limited to the latest 30, newest first');
+      assert.equal(await reader.evaluate('document.querySelectorAll(".chart > li").length'), 30);
+      const expectedMinutes = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(totalMs / 60000);
+      const metrics = await reader.evaluate('[...document.querySelectorAll(".metric")].map(e => e.innerText)');
+      assert.ok(metrics[0].startsWith('7 min'));
+      assert.ok(metrics[1].startsWith(`${expectedMinutes} min`) && metrics[1].includes('65 reads this week'));
+      assert.ok(metrics[2].startsWith('60 min'), 'The oldest, initially hidden engaged record must still count');
+      assert.ok(metrics[3].startsWith('20 min'));
+      const eligible = chronological.filter(s => s.activeMs >= 120000);
+      assert.ok((await reader.text()).includes(`${eligible.filter(s => s.activeMs >= 720000).length} of ${eligible.length} completed reads`), 'Continuation must include hidden reads');
+      assert.equal(await reader.evaluate('document.querySelector("#history-status").getAttribute("role")'), 'status');
+      for (const [width, height] of [[320,300], [844,390], [1280,900], [390,844]]) {
+        await reader.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        await reader.evaluate(`document.documentElement.style.fontSize = ${JSON.stringify(width === 320 ? '200%' : '')}`);
+        assert.equal(await reader.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+        assert.ok(await reader.evaluate('document.querySelector("[data-action=earlier-reads]").getBoundingClientRect().height >= 44'));
+        if (width === 390 || width === 844) {
+          await reader.evaluate('document.querySelector("[data-action=earlier-reads]").scrollIntoView({block:"center"})');
+          const shot = await reader.send('Page.captureScreenshot', { format: 'png' });
+          await writeFile(join(screenshots, `history-load-${width}.png`), Buffer.from(shot.data, 'base64'));
+        }
+      }
+      const ax = await reader.send('Accessibility.getFullAXTree');
+      assert.ok(ax.nodes.some(node => !node.ignored && node.role?.value === 'button' && node.name?.value === 'Show earlier reads'));
+      await reader.click('.history > li:first-child summary');
+      await reader.send('Page.bringToFront');
+      await reader.evaluate('document.querySelector(".history").lastElementChild.querySelector("[data-action=delete]").focus()');
+      await reader.press('Tab');
+      assert.equal(await reader.evaluate('document.activeElement.dataset.action'), 'earlier-reads');
+      assert.equal(await reader.evaluate('document.activeElement.matches(":focus-visible")'), true);
+      const scroll = await reader.evaluate('({x:scrollX,y:scrollY})');
+      await reader.press('Enter');
+      assert.deepEqual(await ids(), expectedIds.slice(0, 60), 'Loading must append exactly the next batch, including timestamp ties');
+      assert.equal(await reader.evaluate('document.activeElement.dataset.id'), expectedIds[30]);
+      assert.equal(await reader.evaluate('document.activeElement.matches(":focus-visible")'), true);
+      assert.deepEqual(await reader.evaluate('({x:scrollX,y:scrollY})'), scroll, 'Loading must retain the reading position');
+      assert.equal(await reader.evaluate('document.querySelector(".history > li:first-child details").open'), true, 'Existing row state must survive loading');
+      assert.match(await reader.evaluate('document.querySelector("#history-status").textContent'), /Showing 60 of 65/);
+      assert.deepEqual(await reader.data(), data, 'Loading history must not change saved data');
+      assert.deepEqual(await reader.evaluate('[...document.querySelectorAll(".metric")].map(e => e.innerText)'), metrics);
+      await reader.press('Tab');
+      assert.equal(await reader.evaluate('document.activeElement.tagName'), 'SUMMARY');
+      assert.equal(await reader.evaluate('document.activeElement.closest("li").dataset.id'), expectedIds[30], 'Keyboard navigation must continue within the first newly loaded read');
+      await reader.click('[data-action=edit][data-id="history-6"]'); await reader.wait('#edit-form');
+      await reader.click('#edit-form [value=comfortable]'); await reader.click('#edit-form [type=submit]');
+      assert.deepEqual(await ids(), expectedIds.slice(0, 60), 'Saving an older read must retain the expanded range');
+      assert.equal((await reader.data()).sessions.find(s => s.id === 'history-6').outcome, 'comfortable');
+      await reader.click('[data-action=delete][data-id="history-5"]'); await reader.click('#confirm-form [type=submit]');
+      const remainingIds = expectedIds.filter(id => id !== 'history-5');
+      assert.deepEqual(await ids(), remainingIds.slice(0, 60));
+      await reader.click('[data-action=earlier-reads]');
+      assert.deepEqual(await ids(), remainingIds, 'The short final batch must expose every remaining saved read exactly once');
+      assert.equal(await reader.evaluate('!!document.querySelector("[data-action=earlier-reads]")?.getClientRects().length'), false);
+      assert.match(await reader.evaluate('document.querySelector("#history-status").textContent'), /Showing 64 of 64/);
+      await reader.click('[data-view=read]'); await reader.click('[data-view=progress]');
+      assert.deepEqual(await ids(), remainingIds.slice(0, 30), 'A new visit starts with a bounded list again');
+      const saved = await reader.data();
+      for (const count of [30, 0]) {
+        const short = { ...saved, sessions: saved.sessions.slice(0, count) };
+        await reader.evaluate(`localStorage.setItem('reading-endurance-v1', ${JSON.stringify(JSON.stringify(short))})`);
+        await reader.send('Page.reload'); await reader.wait('#start-form'); await reader.click('[data-view=progress]');
+        assert.equal((await ids()).length, count);
+        assert.equal(await reader.has('[data-action=earlier-reads]'), false, 'A complete or empty list needs no load control');
+      }
+    } finally { await close(reader); }
+  });
   await test('history action names and deletion identify the selected read', async () => {
     const history = await page(await context());
     try {
