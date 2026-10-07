@@ -101,6 +101,20 @@ After saving or discarding a read, the navigation offers:
   enter a new recommendation and select **Set training target**. Cues can stay Off;
   unavailable vibration never switches to sound automatically.
 
+To prevent automatic screen sleep, open **Settings → Screen**, check **Keep screen
+awake while reading**, and select **Save screen setting**. This is off by default
+and uses more battery. When supported, it keeps the screen awake only during a
+visible, running read; Pause, Finish, leaving the page, or backgrounding releases
+it. Resume or returning to the foreground requests it again. A recovered read
+stays paused until you choose Resume. The preference is saved locally and included
+in exports.
+
+The small status below the reading controls shows whether the request succeeded
+or the screen may sleep. Your browser or device can refuse or release a wake lock,
+including for power-saving reasons. Manual screen locking still works. If the API
+is unavailable, the option is disabled with an explanation; you can use your
+device's screen timeout setting instead. This option does not guarantee cue delivery.
+
 Keep a backup with **Settings → Your local data → Export JSON** if your history
 matters to you. Use the same browser, device, and web address to return to your
 history. Different browsers and devices do not share it; changing the site's
@@ -153,8 +167,9 @@ implementation; its limitations are disclosed rather than hidden behind a wrappe
 
 Choose a cue (or Off), optionally preview it, and pick an initial Train target.
 “Not sure” uses 10 minutes. For a cue, keep this page visible and the screen
-unlocked; browser or device settings may still suppress it. The app does not keep
-the screen awake, and timing works with cues Off.
+unlocked; browser or device settings may still suppress it. The screen can sleep
+by default; **Settings → Screen** offers an optional wake lock. Timing works with
+cues Off.
 
 Save setup, leave Two-minute start selected, and press
 **Start reading**. Put the device down and read your own book. Two active minutes
@@ -229,6 +244,7 @@ flowchart LR
   APP --> CORE["core.js: rules, clock, schema, LocalStore"]
   APP --> LOCK["Browser Web Lock"]
   APP --> CUE["Vibration / Web Audio"]
+  APP --> WAKE["Optional screen wake lock"]
   CORE --> STORAGE["Injected storage: localStorage in the app"]
   APP --> SW["Register sw.js"]
   SW --> CACHE["Cache Storage: listed shell assets only"]
@@ -242,7 +258,7 @@ for a backup or a background timer.
 | Path | Responsibility |
 | --- | --- |
 | [index.html](index.html) | Entry point, metadata, stylesheet/module links, navigation, skip link, page status/error regions, and native dialog container. |
-| [app.js](app.js) | View templates, delegated form/click/change/input events, Web Lock ownership, persistence transactions, cue APIs, focus management, and lifecycle hooks. |
+| [app.js](app.js) | View templates, delegated form/click/change/input events, Web Lock ownership, persistence transactions, cue/wake-lock APIs, focus management, and lifecycle hooks. |
 | [core.js](core.js) | Deterministic replay/statistics, session transitions, schema validation/normalization, and the injected storage adapter. |
 | [style.css](style.css) | Light visual identity, typography, controls, responsive and landscape layouts, safe-area insets, focus indicators, and reduced-motion rules. |
 | [sw.js](sw.js) | Scoped, versioned cache of explicit app-shell URLs. |
@@ -271,6 +287,7 @@ files, or separate documentation tree. The PNGs are source assets to retain.
 | `render()`, `renderReadingInPlace()` | Choose the visible state, replace main content, and preserve reading control focus/scroll when required. |
 | `persist()`, `load()`, `acquire()` | Coordinate writes, failure UI, loading, and exclusive ownership. |
 | `prepareAudio()`, `deliverCue()`, `stopCue()`, `tick()` | Prepare sound within a gesture, request punctual cues, cancel queued output, and sample/checkpoint elapsed time. |
+| `syncScreenWakeLock()`, `releaseScreenWakeLock()` | Acquire only for opted-in visible running reads; invalidate pending requests and release on reading/lifecycle transitions. A late grant releases its own sentinel without affecting a newer request. |
 
 UI views are string templates rendered into `#main`. Delegated document listeners
 continue to work when that content is replaced. Navigation is an in-memory
@@ -473,7 +490,8 @@ starter reading history:
   "settings": {
     "setup": false,
     "initialTarget": 10,
-    "cue": "off"
+    "cue": "off",
+    "keepScreenAwake": false
   },
   "sessions": [],
   "targetChanges": [],
@@ -488,6 +506,7 @@ starter reading history:
 | `settings.setup` | Whether first-run setup has been saved. |
 | `settings.initialTarget` | Whole minutes, 2–60, used as the replay starting point. Setup offers 10, 20, 30, 45, 60, or Not sure (10). |
 | `settings.cue` | `off`, `vibration`, or `sound`. Empty storage uses Off; setup offers vibration if the API exists. |
+| `settings.keepScreenAwake` | Boolean, off by default. Older v1 documents may omit it; validation normalizes a missing field to `false` and rejects nonbooleans. The storage key and format version remain unchanged. |
 | `sessions` | Completed session records; maximum 50,000 accepted by validation. |
 | `targetChanges` | Explicit manual recommendation events; maximum 50,000 accepted by validation. |
 | `active` | One recoverable session or `null`. Pending feedback still occupies this slot. |
@@ -550,7 +569,7 @@ saved/manual event. Deletion leaves order gaps.
 
 Recommendations, comfortable-success counters, totals, chart widths, and longest
 records are derived, not persisted. In-memory view/mode selection, the live clock's
-monotonic baseline, audio nodes, lock state, error state, and unsaved form values
+monotonic baseline, audio nodes, Web Lock/wake-lock state, error state, and unsaved form values
 also do not belong to the JSON schema.
 
 ### Validation, transactions, and data tools
@@ -687,6 +706,12 @@ then releases completion to verify the canceled Start cannot create a read.
 UI actions use hit-tested pointer coordinates
 and actual keyboard events, while some values, faults, and lifecycle conditions
 are injected deliberately.
+
+Screen wake locks are simulated in dedicated contexts to verify the default-off
+preference, keyboard-accessible setting, persistence, running/paused/hidden
+transitions, browser release, denial/unavailability, and grants arriving after
+Pause or Finish. These tests also retain timer arithmetic and storage-failure
+behavior. A fake grant does not prove a real phone will stay awake.
 
 Cases include setup/preview, Start/Finish/feedback/next recommendation, native
 validation, cross-tab and back/forward-cache ownership, recovery, corrupt/failed
@@ -852,16 +877,28 @@ Official documentation checked October 4, 2026:
 - [MDN service worker lifecycle](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers)
   explains update waiting. Service workers do not guarantee reading cues.
 
+Screen wake-lock guidance checked October 7, 2026:
+
+- [W3C Screen Wake Lock API](https://www.w3.org/TR/screen-wake-lock/) and
+  [Chrome screen wake lock guidance](https://developer.chrome.com/docs/capabilities/web-apis/wake-lock):
+  a secure, visible document can request a screen wake lock. Hidden documents lose
+  it; browsers/devices can reject or revoke it. It cannot prevent manual locking.
+
 Vibration is preferred only when its API is exposed; otherwise the setting falls
-back to Off. Sound is never substituted. The app keeps the screen awake only if
-the reader independently configures their device; it requests no wake lock.
+back to Off. Sound is never substituted. An optional screen wake lock defaults off
+and is requested only during visible, running reads. Denial/release is shown without
+interrupting the timer. The app releases it when reading pauses or finishes, on
+storage failure, and before page suspension or departure. It makes a new request
+on Resume or foreground return, without polling or retrying a device-initiated
+release. It cannot keep the app foregrounded or overcome device policy.
 Reliable OS-managed background/locked-screen cue scheduling would require a
 native implementation and platform-specific permissions/lifecycle handling, with
 device policy and silent/DND behavior still requiring validation.
 
 Desktop checks use controlled clocks and simulated vibration/visibility; they
 verify logic, not sensation. Real Android device verification remains required
-for vibration and sound, volume/silent/DND behavior, screen lock, actual background
+for vibration and sound, volume/silent/DND behavior, automatic sleep prevention
+with the option on/off, manual screen lock, battery-saver behavior, actual background
 and resume/sleep arithmetic, installation, offline launch, and data durability.
 Also inspect TalkBack, browser text scaling, and safe areas/cutouts in installed
 portrait and landscape launches on device. No real-device pass is claimed.
@@ -876,7 +913,8 @@ separate verified support claim in this repository.
 Storage and caches are browser-managed and local to an origin/profile. A frozen
 checkpoint is recoverable state, not proof of engagement or permanent durability.
 The app does not guarantee locked-screen cues, exact background scheduling, or
-output under silent/DND policies. It requests no wake lock or notification permission.
+output under silent/DND policies. Its optional screen wake lock is best effort;
+it requests no notification permission.
 
 Current form-state limitations are visible in the implementation: navigating away
 from preparation recreates target/cue controls from defaults, and unsaved engagement

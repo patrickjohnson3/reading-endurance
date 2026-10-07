@@ -9,7 +9,7 @@ export const ordered = events => [...events].sort((a, b) =>
   (a.finishedAt ?? a.at) - (b.finishedAt ?? b.at) || a.order - b.order || a.id.localeCompare(b.id));
 
 export function emptyData() {
-  return { version: VERSION, nextOrder: 1, settings: { setup: false, initialTarget: 10, cue: 'off' },
+  return { version: VERSION, nextOrder: 1, settings: { setup: false, initialTarget: 10, cue: 'off', keepScreenAwake: false },
     sessions: [], targetChanges: [], active: null };
 }
 
@@ -200,6 +200,7 @@ export function validateData(value) {
   const fail = () => { throw new Error('This is not a valid Reading Endurance v1 file. Existing data has been kept.'); };
   if (!value || value.version !== VERSION || !integer(value.nextOrder) || value.nextOrder < 1 ||
     !value.settings || typeof value.settings.setup !== 'boolean' || !target(value.settings.initialTarget) ||
+    ('keepScreenAwake' in value.settings && typeof value.settings.keepScreenAwake !== 'boolean') ||
     !CUES.includes(value.settings.cue) || !Array.isArray(value.sessions) || !Array.isArray(value.targetChanges) ||
     value.sessions.length > 50000 || value.targetChanges.length > 50000 ||
     !value.sessions.every(s => checkSession(s, true)) ||
@@ -213,7 +214,8 @@ export function validateData(value) {
   const pick = (s, keys) => Object.fromEntries(keys.map(k => [k, k === 'confidence' || k === 'targetSignal'
     ? { passed: s[k].passed, attempted: s[k].attempted, suppressed: s[k].suppressed } : s[k]]));
   return { version: VERSION, nextOrder: value.nextOrder,
-    settings: { setup: value.settings.setup, initialTarget: value.settings.initialTarget, cue: value.settings.cue },
+    settings: { setup: value.settings.setup, initialTarget: value.settings.initialTarget, cue: value.settings.cue,
+      keepScreenAwake: value.settings.keepScreenAwake ?? false },
     sessions: value.sessions.map(s => pick(s, [...fields, 'kind', 'order', 'outcome', 'engagedMinutes'])),
     targetChanges: value.targetChanges.map(t => pick(t, ['kind', 'id', 'at', 'order', 'target'])),
     active: value.active === null ? null : pick(value.active, [...fields, 'state', 'owner', 'checkpointAt']) };

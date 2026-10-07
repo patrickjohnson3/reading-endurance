@@ -64,7 +64,7 @@ async function until(fn, label) {
   for (let i = 0; i < 70; i++) { if (await fn()) return; await delay(100); }
   throw new Error(`Timed out: ${label}`);
 }
-const injection = unsupported => `
+const injection = (unsupported, wakeMode) => `
   (() => {
     const NativeDate = Date;
     const priorClock = JSON.parse(sessionStorage.getItem('reading-test-clock') || 'null');
@@ -101,8 +101,25 @@ const injection = unsupported => `
     let visible = true;
     Object.defineProperty(document, 'visibilityState', { get: () => visible ? 'visible' : 'hidden' });
     window.testVisible = value => { visible = value; document.dispatchEvent(new Event('visibilitychange')); };
+    ${wakeMode ? `
+    window.wakeRequests = []; window.wakeSentinels = []; window.wakePending = [];
+    window.wakeResult = 'granted';
+    Object.defineProperty(navigator, 'wakeLock', { value: ${wakeMode === 'unsupported' ? 'undefined' : `{
+      request: type => {
+        wakeRequests.push(type);
+        if (wakeResult === 'throw') throw new Error('wake request failed');
+        if (wakeResult === 'denied') return Promise.reject(new DOMException('denied', 'NotAllowedError'));
+        const sentinel = new EventTarget(); sentinel.released = false; sentinel.type = type;
+        sentinel.release = async () => {
+          if (sentinel.released) return;
+          sentinel.released = true; sentinel.dispatchEvent(new Event('release'));
+        };
+        wakeSentinels.push(sentinel);
+        return wakeResult === 'pending' ? new Promise(resolve => wakePending.push(() => resolve(sentinel))) : Promise.resolve(sentinel);
+      }
+    }`} });` : ''}
   })();`;
-async function page(contextId, unsupported = false, url = origin) {
+async function page(contextId, unsupported = false, url = origin, wakeMode = null) {
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId: contextId });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
   const send = async (method, params) => {
@@ -112,7 +129,7 @@ async function page(contextId, unsupported = false, url = origin) {
     return result;
   };
   await send('Page.enable'); await send('Runtime.enable');
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: injection(unsupported) });
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: injection(unsupported, wakeMode) });
   const evaluate = async expression => {
     const { result, exceptionDetails } = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
     if (exceptionDetails) throw new Error(exceptionDetails.text + ' ' + JSON.stringify(exceptionDetails.exception));
@@ -250,6 +267,144 @@ try {
       assert.deepEqual(await reader.evaluate('cueCalls'), expected, 'Longer pulses must not introduce recurring cues');
       assert.equal(await reader.evaluate('audioCalls.contexts'), 0, 'Vibration must not substitute sound');
     } finally { await close(reader); }
+  });
+  await test('screen wake preference persists and follows running, paused and visible reading', async () => {
+    const reader = await page(await context(), false, origin, 'fake');
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Default reads must let the screen sleep normally');
+      await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]');
+      await reader.click('[data-view=settings]'); await reader.wait('#screen-form');
+      assert.equal(await reader.evaluate('document.querySelector("#keep-screen-awake").checked'), false);
+      for (const [width, height] of [[390,844], [844,390], [320,300], [1280,900]]) {
+        await reader.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        assert.equal(await reader.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+        assert.ok(await reader.evaluate('document.querySelector("#keep-screen-awake").closest("label").getBoundingClientRect().height >= 44'));
+      }
+      await tabTo(reader, '#keep-screen-awake');
+      assert.equal(await reader.evaluate('document.activeElement.matches(":focus-visible")'), true);
+      const ax = await reader.send('Accessibility.getFullAXTree');
+      assert.ok(ax.nodes.some(node => node.role?.value === 'checkbox' && node.name?.value === 'Keep screen awake while reading'));
+      await reader.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+      await reader.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+      await reader.click('#screen-form [type=submit]');
+      assert.equal((await reader.data()).settings.keepScreenAwake, true);
+      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Enabling the setting must not wake an idle screen');
+      await reader.send('Page.reload'); await reader.wait('#start-form');
+      await reader.click('[data-view=settings]');
+      assert.equal(await reader.evaluate('document.querySelector("#keep-screen-awake").checked'), true);
+      await reader.click('[data-view=read]'); await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await until(() => reader.evaluate('wakeSentinels.length === 1'), 'Start requests a screen lock');
+      assert.deepEqual(await reader.evaluate('wakeRequests'), ['screen']);
+      assert.match(await reader.evaluate('document.querySelector("#screen-wake-status").textContent'), /Screen staying awake/);
+      await reader.advance(5000);
+      await reader.click('[data-action=pause]');
+      assert.equal(await reader.evaluate('wakeSentinels[0].released'), true);
+      await reader.click('[data-action=resume]');
+      await until(() => reader.evaluate('wakeSentinels.length === 2'), 'Resume requests a new screen lock');
+      await reader.evaluate('testVisible(false)');
+      assert.equal(await reader.evaluate('wakeSentinels[1].released'), true);
+      await reader.advance(1000);
+      assert.equal(await reader.evaluate('wakeRequests.length'), 2, 'Hidden reads must not request locks');
+      await reader.evaluate('testVisible(true)');
+      await until(() => reader.evaluate('wakeSentinels.length === 3'), 'Returning to the foreground reacquires');
+      await reader.evaluate('wakeSentinels[2].release()');
+      assert.match(await reader.evaluate('document.querySelector("#screen-wake-status").textContent'), /Screen may sleep/);
+      await reader.advance(1000);
+      assert.equal(await reader.evaluate('wakeRequests.length'), 3, 'A browser release must not cause a retry loop');
+      await reader.click('[data-action=pause]'); await reader.click('[data-action=resume]');
+      await until(() => reader.evaluate('wakeSentinels.length === 4'), 'A later Resume may request again');
+      await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+      assert.equal(await reader.evaluate('wakeSentinels[3].released'), true);
+      assert.equal((await reader.data()).active.activeMs, 7000, 'Wake locks must not change active-time arithmetic');
+      await reader.click('#feedback-form [name=skip]'); await reader.click('[data-view=settings]');
+      await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]');
+      await reader.click('[data-view=read]'); await reader.click('#start-form [type=submit]');
+      assert.equal(await reader.evaluate('wakeRequests.length'), 4, 'Turning the preference off must stop subsequent requests');
+    } finally { await close(reader); }
+  });
+  await test('timer-warning renders do not retry a device-released screen lock', async () => {
+    const reader = await page(await context(), false, origin, 'fake');
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('[data-view=settings]'); await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]');
+      await reader.click('[data-view=read]'); await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await reader.evaluate('wakeSentinels[0].release()');
+      await reader.evaluate('testClock.shift(60000)'); await reader.advance(5000);
+      await until(() => reader.evaluate('document.querySelector("#main").textContent.includes("Duration needs confirmation")'), 'timer warning redraw');
+      assert.equal(await reader.evaluate('wakeRequests.length'), 1, 'A timer warning must respect the device release');
+      assert.match(await reader.evaluate('document.querySelector("#screen-wake-status").textContent'), /Screen may sleep/);
+    } finally { await close(reader); }
+  });
+  await test('pending screen locks cannot survive pause, Finish, backgrounding or recovery', async () => {
+    const reader = await page(await context(), false, origin, 'fake');
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('[data-view=settings]'); await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]');
+      await reader.click('[data-view=read]'); await reader.evaluate('wakeResult = "pending"');
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await until(() => reader.evaluate('wakePending.length === 1'), 'screen request is pending');
+      await reader.click('[data-action=pause]'); await reader.evaluate('wakeResult = "granted"'); await reader.click('[data-action=resume]');
+      await reader.evaluate('wakePending.shift()(); Promise.resolve()');
+      await until(() => reader.evaluate('wakeSentinels[0].released'), 'stale grant is released');
+      assert.equal(await reader.evaluate('wakeSentinels[1].released'), false, 'A stale grant must not release the newer lock');
+      await reader.click('[data-action=pause]'); await reader.evaluate('wakeResult = "pending"'); await reader.click('[data-action=resume]');
+      await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+      await reader.evaluate('wakePending.shift()(); Promise.resolve()');
+      assert.equal(await reader.evaluate('wakeSentinels[2].released'), true, 'A grant after Finish must release immediately');
+      await reader.click('#feedback-form [name=skip]'); await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await reader.evaluate('testVisible(false); wakePending.shift()(); Promise.resolve()');
+      assert.equal(await reader.evaluate('wakeSentinels[3].released'), true, 'A hidden grant must be released');
+      await reader.evaluate('wakeResult = "granted"; testVisible(true)');
+      assert.equal(await reader.evaluate('wakeSentinels[4].released'), false);
+      await reader.evaluate('document.dispatchEvent(new Event("freeze"))');
+      assert.equal(await reader.evaluate('wakeSentinels[4].released'), true);
+      await reader.evaluate('document.dispatchEvent(new Event("resume"))');
+      assert.equal(await reader.evaluate('wakeSentinels[5].released'), false);
+      await reader.send('Page.reload'); await reader.wait('#recovery-form');
+      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Recovery must not acquire before explicit Resume');
+      await reader.click('#recovery-form [type=submit]');
+      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Recovering as paused must leave the screen alone');
+      await reader.click('[data-action=resume]');
+      assert.equal(await reader.evaluate('wakeSentinels[0].released'), false);
+      await reader.evaluate(`(() => {
+        const original = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(key, value) {
+          if (key === 'reading-endurance-v1') throw new Error('quota');
+          return original.call(this, key, value);
+        };
+      })()`); await reader.advance(5000);
+      await reader.wait('[data-action=resume]');
+      assert.equal(await reader.evaluate('wakeSentinels[0].released'), true, 'A write failure pauses reading and releases the screen');
+    } finally { await close(reader); }
+  });
+  await test('unsupported or rejected screen wake requests leave timing and saving usable', async () => {
+    for (const mode of ['unsupported', 'denied', 'throw']) {
+      const reader = await page(await context(), false, origin, mode === 'unsupported' ? mode : 'fake');
+      try {
+        await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]'); await reader.click('[data-view=settings]');
+        if (mode === 'unsupported') {
+          assert.equal(await reader.evaluate('document.querySelector("#keep-screen-awake").disabled'), true);
+          assert.match(await reader.text(), /unavailable in this browser/);
+          // An imported preference can be on in a browser without the API.
+          await reader.evaluate('const d = JSON.parse(localStorage.getItem("reading-endurance-v1")); d.settings.keepScreenAwake = true; localStorage.setItem("reading-endurance-v1",JSON.stringify(d))');
+          await reader.send('Page.reload'); await reader.wait('#start-form');
+        } else {
+          await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]'); await reader.click('[data-view=read]');
+          await reader.evaluate(`wakeResult = ${JSON.stringify(mode)}`);
+        }
+        await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+        const status = await reader.evaluate('document.querySelector("#screen-wake-status").textContent');
+        assert.match(status, mode === 'unsupported' ? /unavailable/ : /Screen may sleep/);
+        assert.equal(await reader.evaluate('document.querySelector("#screen-wake-status").getAttribute("role")'), 'status');
+        await reader.advance(30000); await reader.advance(5000);
+        assert.equal(await reader.evaluate('wakeRequests.length'), mode === 'unsupported' ? 0 : 1, 'Unavailable locks must not retry on each checkpoint');
+        await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+        const saved = (await reader.data()).sessions.at(-1);
+        assert.equal(saved.activeMs, 35000); assert.equal(saved.interruptions, 0); assert.equal(saved.uncertain, false);
+      } finally { await close(reader); }
+    }
   });
   await test('portrait layout and keyboard focus', async () => {
     assert.equal(await p.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
@@ -900,14 +1055,15 @@ try {
         cue: 'off', confidenceEnabled: false, targetCue: false,
         confidence: { passed: false, attempted: false, suppressed: false },
         targetSignal: { passed: false, attempted: false, suppressed: false } } };
+    const expectedImported = { ...imported, settings: { ...imported.settings, keepScreenAwake: false } };
     await importFile(JSON.stringify(imported)); await p.wait('#confirm-form');
     await p.click('[data-action=close-dialog]'); assert.deepEqual(await p.data(), original);
     await importFile(JSON.stringify(imported)); await p.wait('#confirm-form');
     await p.click('#confirm-form [type=submit]');
-    assert.deepEqual(await p.data(), imported, 'Import must replace settings, history, manual changes, and pending state together');
+    assert.deepEqual(await p.data(), expectedImported, 'Import must replace the model and default the missing legacy preference off');
     await p.wait('#recovery-form');
     await p.send('Page.reload'); await p.wait('#recovery-form');
-    assert.deepEqual(await p.data(), imported, 'The complete imported model must survive reload before recovery');
+    assert.deepEqual(await p.data(), expectedImported, 'The complete imported model must survive reload before recovery');
     assert.equal(await p.evaluate('document.querySelector("#recovery-form input").value'), '1.5');
     await p.click('#recovery-form [type=submit]'); await p.wait('[data-action=finish]');
     await p.click('[data-action=finish]'); await p.click('#feedback-form [name=skip]'); await p.wait('#start-form');

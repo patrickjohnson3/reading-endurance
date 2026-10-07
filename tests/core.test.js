@@ -297,11 +297,12 @@ test('frozen v1 exports retain their storage identity, records and replay behavi
   const memory = new Map([['reading-endurance-v1', JSON.stringify(fixture)]]);
   const store = new LocalStore({ getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) });
   const loaded = store.load();
+  const expected = { ...fixture, settings: { ...fixture.settings, keepScreenAwake: false } };
   assert.equal(STORAGE_KEY, 'reading-endurance-v1', 'Schema versions must preserve the established data/lock identity');
-  assert.deepEqual(loaded, fixture, 'Loading must preserve the historical format without current constructors');
+  assert.deepEqual(loaded, expected, 'Loading must preserve historical fields and default the new preference off');
   assert.equal(recommend(loaded.settings.initialTarget, loaded.sessions, loaded.targetChanges).target, 7);
   store.save(loaded);
-  assert.deepEqual(JSON.parse(memory.get('reading-endurance-v1')), fixture, 'Saving must retain every accepted field');
+  assert.deepEqual(JSON.parse(memory.get('reading-endurance-v1')), expected, 'Saving must retain every accepted field');
   const unsupported = JSON.stringify({ ...fixture, version: 2 });
   memory.set('reading-endurance-v1', unsupported);
   assert.throws(() => store.load());
@@ -322,6 +323,25 @@ test('versioned schema round trip, duplicate IDs/orders, unsupported version and
   }
   const unknown = structuredClone(data); unknown.untrusted = '<script>'; unknown.settings.extra = true;
   assert.deepEqual(validateData(unknown), data);
+});
+
+test('screen wake preference defaults off, survives storage, and validates optional v1 input', () => {
+  const data = emptyData();
+  assert.equal(data.settings.keepScreenAwake, false);
+  const old = structuredClone(data);
+  delete old.settings.keepScreenAwake;
+  assert.deepEqual(validateData(old), data, 'Older v1 data must gain only the off default');
+  const memory = new Map();
+  const store = new LocalStore({ getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) });
+  for (const enabled of [true, false]) {
+    data.settings.keepScreenAwake = enabled;
+    store.save(data);
+    assert.deepEqual(store.load(), data, 'Exported and stored preferences must retain the selected boolean');
+  }
+  for (const value of [null, 0, 1, 'false', {}, []]) {
+    const invalid = structuredClone(data); invalid.settings.keepScreenAwake = value;
+    assert.throws(() => validateData(invalid), 'Only a boolean or a missing legacy field is valid');
+  }
 });
 
 test('pending read IDs cannot collide with saved reads or manual target changes', () => {

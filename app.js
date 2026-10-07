@@ -9,6 +9,7 @@ const owner = supportedBrowser ? crypto.randomUUID() : null;
 // The lock and data share origin-wide scope, including installations at different paths.
 const lockName = STORAGE_KEY;
 const vibrationAvailable = typeof navigator.vibrate === 'function';
+const screenWakeAvailable = typeof navigator.wakeLock?.request === 'function';
 const Audio = window.AudioContext || window.webkitAudioContext;
 const modeNames = { start: 'Two-minute start', train: 'Train', free: 'Just read' };
 const outcomeNames = { comfortable: 'Comfortable', challenging: 'Challenging but engaged', lost: 'Lost the thread', external: 'Stopped for another reason' };
@@ -28,6 +29,8 @@ let audio = null;
 const audioNodes = new Set();
 let dialogReturnFocus;
 let importSequence = 0;
+let screenWakeLock = null;
+let screenWakeRequest = null;
 
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const minutes = ms => (ms / 60000).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -67,8 +70,64 @@ function persist(next = db) {
   } catch {
     storageFailed = true;
     if (clock?.session.state === 'running') clock.pause(performance.now(), Date.now());
+    releaseScreenWakeLock();
     showError('Local storage could not be written. This read is paused if it was running. Changes are not saved. Keep this page open and retry storage, then submit any unsaved form changes again. Exports do not include unsaved form answers.');
     return false;
+  }
+}
+
+function wantsScreenWakeLock() {
+  return locked && !storageFailed && !needsRecovery && clock?.session === db.active &&
+    db.active?.state === 'running' && db.settings.keepScreenAwake && document.visibilityState === 'visible';
+}
+
+function screenWakeStatus() {
+  if (!screenWakeAvailable) return 'Keeping the screen awake is unavailable in this browser.';
+  if (screenWakeLock && !screenWakeLock.released) return 'Screen staying awake.';
+  if (screenWakeRequest) return 'Requesting to keep the screen awake…';
+  return 'Screen may sleep. Your browser can refuse or release the screen wake lock.';
+}
+
+function updateScreenWakeStatus() {
+  const status = $('#screen-wake-status');
+  if (status) status.textContent = screenWakeStatus();
+}
+
+function releaseScreenWakeLock() {
+  // Invalidating the pending request also covers a grant arriving after Pause/Finish.
+  screenWakeRequest = null;
+  const sentinel = screenWakeLock;
+  screenWakeLock = null;
+  if (sentinel) sentinel.release().catch(() => {});
+  updateScreenWakeStatus();
+}
+
+async function syncScreenWakeLock() {
+  if (!wantsScreenWakeLock()) { releaseScreenWakeLock(); return; }
+  if (!screenWakeAvailable || screenWakeLock && !screenWakeLock.released || screenWakeRequest) return;
+  const request = {};
+  const session = db.active;
+  screenWakeRequest = request;
+  updateScreenWakeStatus();
+  try {
+    const sentinel = await navigator.wakeLock.request('screen');
+    if (screenWakeRequest !== request || db.active !== session || !wantsScreenWakeLock()) {
+      await sentinel.release();
+      return;
+    }
+    screenWakeRequest = null;
+    screenWakeLock = sentinel;
+    sentinel.addEventListener('release', () => {
+      if (screenWakeLock !== sentinel) return;
+      screenWakeLock = null;
+      // Respect a browser/device release; only a later Resume or foreground return retries.
+      updateScreenWakeStatus();
+    }, { once: true });
+    updateScreenWakeStatus();
+  } catch {
+    if (screenWakeRequest !== request) return;
+    screenWakeRequest = null;
+    updateScreenWakeStatus();
   }
 }
 
@@ -88,7 +147,7 @@ function renderSetup() {
     <form id="setup-form"><section class="panel"><h2>Start with two minutes</h2>
     <p>Two minutes meets the starting commitment. A single optional cue means “You've got this.” Keep reading until you choose to finish.</p>
     <p class="help">Two minutes is a design choice, not a measured threshold.</p>${cueSelect('setup-cue', vibrationAvailable ? 'vibration' : 'off')}
-    <p class="help">For cues, keep this page visible and the screen unlocked. Background or locked-screen cues may be missed. The app will not keep your screen awake.</p></section>
+    <p class="help">For cues, keep this page visible and the screen unlocked. Background or locked-screen cues may be missed. The screen can sleep by default; keeping it awake is optional in Settings.</p></section>
     <section class="panel"><h2>For when you want to train</h2>
     <label class="field"><span>Initial training target</span><select name="initialTarget">
     ${[10,20,30,45,60].map(n => `<option value="${n}">${n} minutes</option>`).join('')}<option value="10">Not sure — start at 10 minutes</option></select></label>
@@ -113,7 +172,7 @@ function renderRead() {
     <p class="help" id="collision-note" hidden>At a two-minute target, only the confidence cue is used. Turn it off if you prefer the target cue.</p></section>
     <div class="panel"><p id="commitment">${mode === 'start' ? 'Two minutes counts. There is no longer target.' : mode === 'train' ? 'Read toward your chosen target; finish when you choose.' : 'Read for as long as you choose.'}</p>
     ${db.settings.cue !== 'off' ? `<label class="check"><input type="checkbox" name="confidence" id="confidence" checked><span>Confidence cue at two active minutes — “You've got this.”</span></label>
-      <p class="help">Keep this page visible and the screen unlocked for cues. Browser or device settings may suppress them. Timing continues without a cue; the screen can sleep normally.</p>` : '<p class="help">Cues are off. You can choose a subtle vibration or brief sound in Settings.</p>'}</div>
+      <p class="help">Keep this page visible and the screen unlocked for cues. Browser or device settings may suppress them. Timing continues without a cue. Keeping the screen awake is optional in Settings.</p>` : '<p class="help">Cues are off. You can choose a subtle vibration or brief sound in Settings.</p>'}</div>
     <button type="submit" class="primary wide">Start reading</button></form>`;
 }
 
@@ -126,6 +185,7 @@ function renderActive() {
     <p class="help">${s.mode === 'start' ? 'Two minutes meets your commitment. Continue if you like.' : s.mode === 'train' ? 'Finish whenever you choose, including beyond the target.' : 'No target. Finish when you choose.'}</p>
     <div class="reading-controls"><button type="button" class="primary" data-action="finish">Finish</button>
     <button type="button" data-action="${s.state === 'paused' ? 'resume' : 'pause'}" ${storageFailed ? 'disabled' : ''}>${s.state === 'paused' ? 'Resume' : 'Pause'}</button></div>
+    ${db.settings.keepScreenAwake && s.state === 'running' ? `<p class="help" id="screen-wake-status" role="status">${screenWakeStatus()}</p>` : ''}
     ${s.state === 'paused' ? '<p class="help">Paused time does not count. This read is marked interrupted.</p><button type="button" class="quiet" data-action="discard">Discard read…</button>' : ''}
     ${s.uncertain ? '<p class="help">Duration needs confirmation before saving. This read is excluded from training changes and longest engaged records.</p>' : ''}`;
 }
@@ -191,6 +251,10 @@ function renderSettings() {
   return `<p class="eyebrow">Make it work for you</p><h1>Settings.</h1>
     <form id="cue-form" class="panel"><h2>One quiet confidence cue</h2>${cueSelect('settings-cue', db.settings.cue)}
     <p class="help">Cues need this page visible and the screen unlocked. Sound, vibration, silent mode, and Do Not Disturb depend on your browser and device. A target cue is separate, default-off, and selected before a Train read.</p><button type="submit" class="primary">Save cue setting</button></form>
+    <form id="screen-form" class="panel"><h2>Screen</h2>
+    <label class="check"><input type="checkbox" id="keep-screen-awake" name="keepScreenAwake" ${db.settings.keepScreenAwake ? 'checked' : ''} ${!screenWakeAvailable ? 'disabled' : ''} aria-describedby="screen-wake-help"><span>Keep screen awake while reading</span></label>
+    <p class="help" id="screen-wake-help">${screenWakeAvailable ? 'Off by default. Prevents automatic screen sleep only while this page is visible and a read is running. Uses more battery. You can still lock the screen manually; your browser or device may refuse or release the wake lock.' : 'Keeping the screen awake is unavailable in this browser. Reads and cues still work without it; use your device’s screen timeout setting if needed.'}</p>
+    <button type="submit" ${!screenWakeAvailable ? 'disabled' : ''}>Save screen setting</button></form>
     <form id="target-form" class="panel"><h2>Training target</h2><p>Current recommendation: ${rec()} minutes.</p><label class="field"><span>Set a new recommendation</span><div class="row"><input type="number" name="target" min="2" max="60" step="1" value="${rec()}" required><span>minutes</span></div></label>
     <p class="help">A manual change is saved in order with your reads and resets the Comfortable count. You can keep reading beyond 60 minutes.</p><button type="submit">Set training target</button></form>
     <section class="panel"><h2>Your local data</h2><p>No sync, telemetry, or external transmission. Browser data can be cleared or evicted. Keep an export if your history matters to you.</p>
@@ -219,6 +283,7 @@ function render(focus = true) {
   if (focus) { main.focus({ preventScroll: true }); window.scrollTo(0, 0); }
   if (view === 'settings') updateOfflineStatus();
   syncCollision();
+  if (!wantsScreenWakeLock()) releaseScreenWakeLock();
 }
 
 function renderReadingInPlace(action = main.contains(document.activeElement) ? document.activeElement.dataset.action : null) {
@@ -362,6 +427,7 @@ async function startRead(form) {
   clock = new ReadingClock(db.active, performance.now(), Date.now());
   if (ready) announce('');
   render();
+  syncScreenWakeLock();
 }
 
 function saveFeedback(form, skip, editedId) {
@@ -399,7 +465,7 @@ function saveFeedback(form, skip, editedId) {
 
 document.addEventListener('submit', event => {
   const form = event.target;
-  if (!['setup-form', 'start-form', 'cue-form', 'target-form', 'feedback-form', 'recovery-form', 'edit-form'].includes(form.id)) return;
+  if (!['setup-form', 'start-form', 'cue-form', 'screen-form', 'target-form', 'feedback-form', 'recovery-form', 'edit-form'].includes(form.id)) return;
   event.preventDefault();
   if (!locked || corrupt) return;
   const values = new FormData(form);
@@ -409,6 +475,10 @@ document.addEventListener('submit', event => {
     if (!CUES.includes(next.settings.cue)) return;
     if (form.id === 'setup-form') { next.settings.setup = true; next.settings.initialTarget = Number(values.get('initialTarget')); }
     if (persist(next)) { render(); announce(form.id === 'cue-form' ? 'Cue setting saved.' : 'Ready when you are.'); }
+  } else if (form.id === 'screen-form') {
+    const next = structuredClone(db);
+    next.settings.keepScreenAwake = form.elements.keepScreenAwake.checked;
+    if (persist(next)) { render(); announce('Screen setting saved.'); }
   } else if (form.id === 'target-form') {
     const next = structuredClone(db);
     next.targetChanges.push({ kind: 'target', id: crypto.randomUUID(), at: Date.now(), order: next.nextOrder++, target: Number(values.get('target')) });
@@ -503,7 +573,7 @@ document.addEventListener('click', async event => {
     if (db.active.cue === 'sound') await prepareAudio();
     if (!locked || clock !== pendingClock || db.active?.state !== 'paused') return;
     clock.resume(performance.now(), Date.now());
-    if (persist()) renderReadingInPlace('pause');
+    if (persist()) { renderReadingInPlace('pause'); syncScreenWakeLock(); }
     else render();
   } else if (action === 'finish' && clock) {
     clock.finish(performance.now(), Date.now()); stopCue(); persist(); render();
@@ -574,14 +644,15 @@ document.addEventListener('visibilitychange', () => {
   if (locked && db.active && !needsRecovery && !storageFailed) persist();
   if (document.visibilityState !== 'visible') stopCue();
   // Do not resume audio on return: no delayed cue can be queued by autoplay handling.
+  syncScreenWakeLock();
 });
-document.addEventListener('freeze', () => { tick({ resumed: true, allowCue: false }); if (locked && db.active && !storageFailed) persist(); stopCue(); });
-document.addEventListener('resume', () => tick({ resumed: true, allowCue: false }));
+document.addEventListener('freeze', () => { tick({ resumed: true, allowCue: false }); if (locked && db.active && !storageFailed) persist(); stopCue(); releaseScreenWakeLock(); });
+document.addEventListener('resume', () => { tick({ resumed: true, allowCue: false }); syncScreenWakeLock(); });
 window.addEventListener('pagehide', () => {
   tick({ resumed: true, allowCue: false });
   if (locked && db.active && !storageFailed) persist();
   if (dialog.open) dialog.close();
-  stopCue(); clock = null; locked = false; releaseLock?.(); releaseLock = null;
+  stopCue(); releaseScreenWakeLock(); clock = null; locked = false; releaseLock?.(); releaseLock = null;
 });
 window.addEventListener('pageshow', event => { if (event.persisted) acquire(); });
 
