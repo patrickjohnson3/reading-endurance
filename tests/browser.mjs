@@ -190,7 +190,12 @@ try {
   server = createServer(async (request, response) => {
     if (serverOffline) { request.socket.destroy(); return; }
     try {
-      const pathname = new URL(request.url, 'http://localhost').pathname;
+      // Chrome uses this server as its proxy too. Never forward another origin.
+      const url = new URL(request.url, origin);
+      if (url.origin !== origin && url.origin !== alternateOrigin) {
+        response.writeHead(403); response.end('Outside test origins'); return;
+      }
+      const pathname = url.pathname;
       const path = pathname.startsWith(SECOND_INSTALLATION_PATH) ? pathname.slice(SECOND_INSTALLATION_PATH.length - 1) : pathname;
       const file = resolve(root, `.${path.endsWith('/') ? path + 'index.html' : path}`);
       if (!file.startsWith(root + '/')) throw new Error('outside root');
@@ -201,13 +206,19 @@ try {
       response.end(contents);
     } catch { response.writeHead(404); response.end('Not found'); }
   });
+  server.on('connect', (_request, socket) => {
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+  });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   origin = `http://127.0.0.1:${server.address().port}`;
   alternateOrigin = origin.replace('127.0.0.1', 'reading-endurance.test');
   chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
     '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
-    '--host-resolver-rules=MAP reading-endurance.test 127.0.0.1', '--no-proxy-server', '--password-store=basic',
+    '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-quic',
+    '--disable-features=MediaRouter,OptimizationHints,AutofillServerCommunication',
+    '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', '--password-store=basic',
+    `--proxy-server=${origin}`, '--proxy-bypass-list=<-loopback>',
     `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'
   ], { env: browserEnv, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
@@ -243,6 +254,27 @@ try {
       assert.deepEqual(await readdir(temporaryRoot), [], 'Failed startup must remove its temporary browser state');
     });
   }
+  await test('browser networking cannot reach unrelated HTTP or HTTPS services', async () => {
+    let connections = 0;
+    const peer = createServer((_request, response) => {
+      response.writeHead(200, { 'Access-Control-Allow-Origin': '*' }); response.end('unrelated service');
+    });
+    peer.on('connection', () => { connections++; });
+    peer.on('clientError', (_error, socket) => socket.destroy());
+    peer.listen(0, '127.0.0.1'); await once(peer, 'listening');
+    let reader;
+    try {
+      reader = await page(await context());
+      for (const protocol of ['http', 'https']) {
+        const url = `${protocol}://127.0.0.1:${peer.address().port}/probe`;
+        await reader.evaluate(`fetch(${JSON.stringify(url)}).then(r => r.text()).catch(() => null)`);
+        assert.equal(connections, 0, `${protocol} must not connect to services outside the test origins`);
+      }
+    } finally {
+      if (reader) await close(reader);
+      await new Promise(resolveClose => peer.close(resolveClose));
+    }
+  });
   const contextId = await context();
   p = await page(contextId);
   await test('setup and preview from a gesture do not start a read', async () => {

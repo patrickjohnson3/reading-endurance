@@ -19,6 +19,7 @@ export async function isolatedEnvironment(directory, inherited = process.env) {
   env.TMP = env.TEMP = env.TMPDIR;
   env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${join(env.XDG_RUNTIME_DIR, 'unavailable-bus')}`;
   env.NPM_CONFIG_LOGS_DIR = join(env.NPM_CONFIG_CACHE, '_logs');
+  env.NPM_CONFIG_UPDATE_NOTIFIER = 'false';
   env.NPM_CONFIG_USERCONFIG = join(directory, 'user.npmrc');
   env.NPM_CONFIG_GLOBALCONFIG = join(directory, 'global.npmrc');
   await writeFile(env.NPM_CONFIG_USERCONFIG, '', { flag: 'wx' });

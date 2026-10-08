@@ -28,6 +28,7 @@ async function fixture() {
     await writeFile(env[name], 'user-owned configuration');
   }
   env.npm_config_userconfig = env.NPM_CONFIG_USERCONFIG;
+  env.NPM_CONFIG_UPDATE_NOTIFIER = env.npm_config_update_notifier = 'true';
   const executable = join(root, 'npm');
   await writeFile(executable, `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -41,7 +42,8 @@ for (const directory of Object.values(directories)) {
   fs.writeFileSync(path.join(directory, 'probe.txt'), 'launcher side effect');
 }
 fs.writeFileSync(process.env.ISOLATION_PROBE_FILE, JSON.stringify({directories, configuration,
-  inheritedUserconfig: process.env.npm_config_userconfig, args: process.argv.slice(2)}));
+  inheritedUserconfig: process.env.npm_config_userconfig,
+  updateNotifier: process.env.NPM_CONFIG_UPDATE_NOTIFIER, args: process.argv.slice(2)}));
 process.exit(process.argv.includes('about:blank') ? 1 : Number(process.env.ISOLATION_PROBE_EXIT || 0));
 `, { mode: 0o700 });
   env.CHROME_BIN = executable;
@@ -91,6 +93,7 @@ test('validation isolates state before npm starts and cleans its writes', async 
     assert.equal(result.status, 0, result.stderr);
     const probe = await assertContained(f);
     assert.deepEqual(probe.args, ['run', 'check'], 'The isolated entry must run the canonical npm check');
+    assert.equal(probe.updateNotifier, 'false', 'Validation must disable npm registry update checks');
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 

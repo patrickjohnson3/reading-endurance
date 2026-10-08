@@ -136,6 +136,10 @@ Do not use a reader's regular browser profile or real reading exports as test
 fixtures. Keep profiles, downloads, screenshots, logs, `test-results/`, and
 `node_modules/` out of commits; the UI harness cleans up its entire temporary state.
 Use `SCREENSHOT_DIR` outside the repository when retaining visual checks.
+Keep npm update checks disabled and browser traffic constrained to the harness's
+two app origins. Its proxy must reject other origins and CONNECT tunnels, including
+IP literals and unrelated loopback services; do not replace this with page-only
+request interception or DNS blocking alone.
 
 No repository-specific branch, commit-message, or release-automation convention
 is established. Keep changes scoped to the task, preserve unrelated edits, and

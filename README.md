@@ -224,6 +224,13 @@ isolated automated validation. `PATH`, `CHROME_BIN`, and the explicit
 `SCREENSHOT_DIR` output override are preserved. Chrome also isolates its own home,
 XDG, and temporary paths when `tests/browser.mjs` is run directly, and uses a basic
 password store and an unavailable session bus rather than the user's desktop bus.
+Validation disables npm's update notifier and Chrome background network services.
+Chrome sends HTTP(S) requests through the test server as a proxy: only the exact
+app origin and its insecure test alias are served, and all HTTPS tunnels are
+rejected. Other hostnames cannot resolve. This also prevents requests to unrelated
+loopback services; the regression uses a disposable second server to verify HTTP
+and HTTPS cannot reach it. Node's CDP connection remains on the browser's own
+ephemeral loopback port.
 
 There is no build step, generated application bundle, package installation, or
 separate lint, format, or type-check command. `package.json` is private and supplies
