@@ -6,6 +6,7 @@ import { readFile, mkdtemp, rm, writeFile, readdir, mkdir } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { resolve, join, extname } from 'node:path';
 import { once } from 'node:events';
+import { isolatedEnvironment } from './environment.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const workerSource = await readFile(join(root, 'sw.js'), 'utf8');
@@ -15,6 +16,7 @@ const cacheSuffix = cacheDeclaration[1];
 const upgradedCacheSuffix = `${cacheSuffix}-test-update`;
 const upgradedWorkerSource = workerSource.replace(cacheDeclaration[0], 'const CACHE = `${CACHE_PREFIX}' + upgradedCacheSuffix + '`;');
 assert.notEqual(upgradedWorkerSource, workerSource, 'The upgrade fixture must change the worker');
+let browserRoot;
 let profile;
 let screenshots;
 let server;
@@ -178,8 +180,12 @@ async function tabTo(p, selector) {
 const test = async (name, fn) => { await fn(); console.log(`PASS ${name}`); };
 let p;
 try {
-  profile = await mkdtemp(join(tmpdir(), 'reading-endurance-browser-'));
-  screenshots = process.env.SCREENSHOT_DIR || join(profile, 'screenshots');
+  // Leave room for Chrome's nested Unix socket paths inside the validation root.
+  browserRoot = await mkdtemp(join(tmpdir(), 're-browser-'));
+  const browserEnv = await isolatedEnvironment(browserRoot);
+  profile = join(browserRoot, 'profile');
+  await mkdir(profile, { mode: 0o700 });
+  screenshots = process.env.SCREENSHOT_DIR || join(browserRoot, 'screenshots');
   await mkdir(screenshots, { recursive: true });
   server = createServer(async (request, response) => {
     if (serverOffline) { request.socket.destroy(); return; }
@@ -201,9 +207,9 @@ try {
   alternateOrigin = origin.replace('127.0.0.1', 'reading-endurance.test');
   chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
     '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
-    '--host-resolver-rules=MAP reading-endurance.test 127.0.0.1', '--no-proxy-server',
+    '--host-resolver-rules=MAP reading-endurance.test 127.0.0.1', '--no-proxy-server', '--password-store=basic',
     `--user-data-dir=${profile}`, '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', 'about:blank'
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  ], { env: browserEnv, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   const endpoint = await new Promise((resolveEndpoint, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Chrome did not start: ${stderr}`)), 15000);
@@ -234,7 +240,7 @@ try {
       assert.equal(signal, null, 'Failed startup must exit without timing out');
       assert.notEqual(code, 0, 'The child must encounter the intended startup failure');
       assert.match(errorOutput, message);
-      assert.deepEqual(await readdir(temporaryRoot), [], 'Failed startup must remove its temporary browser profile');
+      assert.deepEqual(await readdir(temporaryRoot), [], 'Failed startup must remove its temporary browser state');
     });
   }
   const contextId = await context();
@@ -1513,5 +1519,5 @@ try {
     await exited;
   }
   if (server?.listening) await new Promise(resolveClose => server.close(resolveClose));
-  if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  if (browserRoot) await rm(browserRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

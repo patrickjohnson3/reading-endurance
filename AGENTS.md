@@ -22,6 +22,8 @@ self-reported engagement as measured comprehension or cognitive/medical benefit.
 | `tests/core.test.js` | Node built-in tests with explicit clocks and injected storage. |
 | `tests/fixtures/` | Frozen synthetic export formats for compatibility tests. Do not regenerate historical fixtures from current constructors or rewrite them to accommodate schema changes. |
 | `tests/browser.mjs` | Dependency-free Chrome DevTools Protocol checks through the actual UI, using isolated browser contexts and a temporary profile. |
+| `tests/validate.mjs`, `tests/environment.mjs` | Isolate validation before npm and browser startup; keep child home/configuration/cache and temporary writes inside owned disposable directories. |
+| `tests/isolation.test.js` | Subprocess regressions using fake launchers and disposable ambient-state sentinels. |
 | `README.md` | Authoritative behavior, timing/schema explanations, run instructions, and device-verification limitations. |
 
 There is no generated build-output directory. Serve the checked-in files directly;
@@ -35,9 +37,9 @@ with Node 24). No `npm install` is needed.
 | Command | Use |
 | --- | --- |
 | `npm start` | Python static server on `127.0.0.1:8000`. Use HTTPS or localhost; `file://` and insecure phone LAN URLs do not provide the required secure browser context. |
-| `npm test` | Pure-rule/clock/storage tests using Node's built-in runner; new unit tests must match `tests/*.test.js`. |
-| `npm run check` | JavaScript syntax checks and unit tests; run after application JavaScript or unit-test changes. |
-| `npm run test:ui` | Run after application behavior, HTML/CSS, service worker, manifest/assets, or browser-harness changes. Requires `google-chrome` on PATH or `CHROME_BIN`; uses a loopback server and temporary browser profile. |
+| `node tests/validate.mjs test` | Runs `npm test` in disposable state using Node's built-in runner; new unit tests must match `tests/*.test.js`. |
+| `node tests/validate.mjs check` | Runs `npm run check` (JavaScript syntax checks and unit tests) in disposable state; run after application JavaScript or unit-test changes. |
+| `node tests/validate.mjs test:ui` | Runs `npm run test:ui` after application behavior, HTML/CSS, service worker, manifest/assets, or browser-harness changes. Requires `google-chrome` on PATH or `CHROME_BIN`; uses a loopback server and temporary browser state. |
 
 No separate build, lint, format, type-check, packaging command, dependency lockfile,
 or CI workflow exists. Do not invent such checks in completion reports.
@@ -132,7 +134,7 @@ remaining device checks as described in the README.
 Keep credentials out of browser-served files and reading data local.
 Do not use a reader's regular browser profile or real reading exports as test
 fixtures. Keep profiles, downloads, screenshots, logs, `test-results/`, and
-`node_modules/` out of commits; the UI harness cleans up its temporary profile.
+`node_modules/` out of commits; the UI harness cleans up its entire temporary state.
 Use `SCREENSHOT_DIR` outside the repository when retaining visual checks.
 
 No repository-specific branch, commit-message, or release-automation convention

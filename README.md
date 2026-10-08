@@ -197,24 +197,33 @@ From this directory, with Python 3 and Node 22.8+ (validated with Node 24):
 ```sh
 npm start
 # Open http://localhost:8000
-npm run check
-npm run test:ui
+node tests/validate.mjs check
+node tests/validate.mjs test:ui
 ```
 
-No `npm install` is needed. `npm run check` runs syntax checks and the pure-rule
-tests using Node's built-in test runner. `test:ui` additionally requires Chrome
-(`google-chrome` on PATH, or set `CHROME_BIN`). It starts a loopback-only server and
-an isolated temporary headless browser, then removes the profile, including after
-startup failures. It uses Node's built-in WebSocket and the Chrome DevTools
-Protocol; no test packages are needed.
+No `npm install` is needed. The validation entry point creates disposable home,
+XDG, npm configuration/cache, and temporary directories before starting npm.
+It removes these after success or failure. `check` runs syntax checks and the
+pure-rule tests using Node's built-in test runner. `test:ui` additionally requires
+Chrome (`google-chrome` on PATH, or set `CHROME_BIN`). It starts a loopback-only server and
+an isolated temporary headless browser, then removes its entire state directory,
+including after startup failures. It uses Node's built-in WebSocket and the Chrome
+DevTools Protocol; no test packages are needed.
 Set `SCREENSHOT_DIR=/tmp/reading-endurance-review` to retain screenshots.
 
 | Command | What it does |
 | --- | --- |
 | `npm start` | Serves the checked-in files with Python's HTTP server, bound to `127.0.0.1:8000`. |
-| `npm test` | Runs `tests/*.test.js` with Node's built-in runner and test isolation disabled. |
-| `npm run check` | Checks syntax in `app.js`, `core.js`, and `sw.js`, then runs the unit tests. |
-| `npm run test:ui` | Starts its own temporary server and Chrome profile and runs the browser harness; `npm start` is not required. |
+| `node tests/validate.mjs test` | Runs `npm test`: `tests/*.test.js` with Node's built-in runner and test isolation disabled. |
+| `node tests/validate.mjs check` | Runs `npm run check`: syntax checks in `app.js`, `core.js`, and `sw.js`, then unit tests. |
+| `node tests/validate.mjs test:ui` | Runs `npm run test:ui`: its own temporary server and Chrome state; `npm start` is not required. |
+
+The npm commands remain available as shortcuts, but npm itself accesses its
+configuration/cache before a package script starts. Use the Node entry point for
+isolated automated validation. `PATH`, `CHROME_BIN`, and the explicit
+`SCREENSHOT_DIR` output override are preserved. Chrome also isolates its own home,
+XDG, and temporary paths when `tests/browser.mjs` is run directly, and uses a basic
+password store and an unavailable session bus rather than the user's desktop bus.
 
 There is no build step, generated application bundle, package installation, or
 separate lint, format, or type-check command. `package.json` is private and supplies
@@ -268,6 +277,8 @@ for a backup or a background timer.
 | [tests/core.test.js](tests/core.test.js) | Node tests for rules, clocks, recovery, schema, and storage errors. |
 | [tests/fixtures/reading-endurance-v1.json](tests/fixtures/reading-endurance-v1.json) | Frozen synthetic v1 export covering saved reads, manual changes, and a recovered pending read. Compatibility evidence independent of current constructors. |
 | [tests/browser.mjs](tests/browser.mjs) | Chrome DevTools Protocol harness, temporary HTTP server, controlled clocks, UI assertions, screenshots, and offline/update checks. |
+| [tests/validate.mjs](tests/validate.mjs), [tests/environment.mjs](tests/environment.mjs) | Start npm and Chrome with disposable home/configuration/cache and temporary paths; their callers own cleanup. |
+| [tests/isolation.test.js](tests/isolation.test.js) | Fake-launcher subprocess checks for containment, cleanup, and preservation of ambient state. |
 | [package.json](package.json) | Private package metadata, native ES-module mode, and canonical development commands. |
 | [.gitignore](.gitignore) | Excludes dependency directories, test results, and logs. |
 | [README.md](README.md), [AGENTS.md](AGENTS.md) | Behavior/developer reference and contributor constraints, respectively. |
@@ -703,7 +714,10 @@ boundaries and eligibility, overrides, edits/deletes/manual changes/tie ordering
 honest totals, schema rejection/normalization, and failed storage.
 
 The browser harness starts an ephemeral loopback HTTP server and isolated Chrome
-profile. It uses Node's built-in WebSocket to speak CDP, installs controlled clocks
+profile, home, configuration/cache, and temporary directories. A fake launcher
+checks containment and cleanup of writes outside the profile after startup failure;
+fake npm commands check isolation before npm starts and cleanup after success or failure.
+It uses Node's built-in WebSocket to speak CDP, installs controlled clocks
 before page scripts run, and saves those test clocks in sessionStorage across reload.
 Vibration is simulated; Web Audio construction, tone creation, and cancellation
 are counted around the native browser API. Preview and confidence cues use normal
@@ -725,7 +739,7 @@ Cases include setup/preview, Start/Finish/feedback/next recommendation, native
 validation, cross-tab and back/forward-cache ownership, recovery, corrupt/failed
 storage, real JSON downloads/imports, focus/status/error behavior, accessible action
 names, portrait/landscape/desktop bounds, enlarged text, and safe-area emulation.
-Temporary profiles/downloads/default screenshots are removed in cleanup, including
+Temporary browser state/downloads/default screenshots are removed in cleanup, including
 tested startup failures.
 
 PWA coverage uses the service worker: it installs an initial shell, waits for a
@@ -743,8 +757,8 @@ describes the previously exercised implementation; rerun relevant checks for cha
 
 | Change | Required validation |
 | --- | --- |
-| Application JavaScript or unit tests | `npm run check`; extend controlled-clock/rule/storage evidence for changed boundaries. |
-| UI behavior, HTML/CSS, shell assets, manifest, worker, or browser harness | `npm run test:ui`, plus relevant unit checks and responsive/focus inspection. |
+| Application JavaScript or unit tests | `node tests/validate.mjs check`; extend controlled-clock/rule/storage evidence for changed boundaries. |
+| UI behavior, HTML/CSS, shell assets, manifest, worker, or browser harness | `node tests/validate.mjs test:ui`, plus relevant unit checks and responsive/focus inspection. |
 | Training/history rules | Replay edited/deleted history, overrides, ties, manual changes, and ineligible reads; retain honest statistics tests. |
 | Data schema/import | Coordinate `VERSION`, `STORAGE_KEY`, validation, import/export, tests, and these schema docs; preserve unreadable old data explicitly. |
 | Documentation only | Check referenced commands/paths/behavior and run `git diff --check`; browser tests are not required. |
@@ -765,7 +779,7 @@ own their context; keep deliberate workflow dependencies within a named scenario
 To retain screenshots outside the temporary profile:
 
 ```sh
-SCREENSHOT_DIR=/tmp/reading-endurance-review npm run test:ui
+SCREENSHOT_DIR=/tmp/reading-endurance-review node tests/validate.mjs test:ui
 ```
 
 Set `CHROME_BIN` to an installed Chrome executable path if `google-chrome` is not
