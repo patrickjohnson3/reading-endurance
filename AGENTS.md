@@ -140,6 +140,8 @@ Keep npm update checks disabled and browser traffic constrained to the harness's
 two app origins. Its proxy must reject other origins and CONNECT tunnels, including
 IP literals and unrelated loopback services; do not replace this with page-only
 request interception or DNS blocking alone.
+Mute headless Chrome output while retaining native Web Audio scheduling and
+cancellation checks.
 
 No repository-specific branch, commit-message, or release-automation convention
 is established. Keep changes scoped to the task, preserve unrelated edits, and

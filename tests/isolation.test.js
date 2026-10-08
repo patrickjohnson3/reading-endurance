@@ -79,7 +79,8 @@ test('browser startup isolates inherited home/configuration and cleans failed-la
     assert.equal(result.error, undefined);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Chrome exited 1/);
-    await assertContained(f);
+    const probe = await assertContained(f);
+    assert.ok(probe.args.includes('--mute-audio'), 'Native cue checks must not use audible host output');
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 

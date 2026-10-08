@@ -214,7 +214,7 @@ try {
   origin = `http://127.0.0.1:${server.address().port}`;
   alternateOrigin = origin.replace('127.0.0.1', 'reading-endurance.test');
   chrome = spawn(process.env.CHROME_BIN || 'google-chrome', [
-    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check',
+    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', '--mute-audio',
     '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-quic',
     '--disable-features=MediaRouter,OptimizationHints,AutofillServerCommunication',
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', '--password-store=basic',

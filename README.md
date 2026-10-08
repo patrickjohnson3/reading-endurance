@@ -728,7 +728,8 @@ It uses Node's built-in WebSocket to speak CDP, installs controlled clocks
 before page scripts run, and saves those test clocks in sessionStorage across reload.
 Vibration is simulated; Web Audio construction, tone creation, and cancellation
 are counted around the native browser API. Preview and confidence cues use normal
-audio scheduling; the cancellation case schedules native target oscillators 60
+audio scheduling, with Chrome's output muted to avoid host speaker output; the
+cancellation case schedules native target oscillators 60
 seconds ahead to avoid racing tone completion while clicking Finish.
 Another case gates native audio resume completion, navigates away from Start,
 then releases completion to verify the canceled Start cannot create a read.
