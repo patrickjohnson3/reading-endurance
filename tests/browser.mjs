@@ -365,6 +365,155 @@ try {
       } finally { await close(reader); }
     }
   });
+  await test('Settings auto-save committed changes without losing focus or creating duplicate target events', async () => {
+    const reader = await page(await context(), false, origin, 'fake');
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('[data-view=settings]'); await tabTo(reader, '#settings-cue');
+      await reader.set('#settings-cue', 'vibration');
+      assert.equal((await reader.data()).settings.cue, 'vibration', 'Changing the cue must persist without Save');
+      assert.equal(await reader.evaluate('document.activeElement.id'), 'settings-cue');
+      await reader.click('#keep-screen-awake');
+      assert.equal((await reader.data()).settings.keepScreenAwake, true);
+      assert.equal(await reader.evaluate('document.activeElement.id'), 'keep-screen-awake');
+      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Saving the preference must not wake an idle screen');
+      await reader.click('#target-form input');
+      await reader.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+      await reader.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+      await reader.send('Input.insertText', { text: '20' });
+      assert.equal((await reader.data()).targetChanges.length, 0, 'Typing must not save intermediate targets');
+      await reader.press('Enter');
+      const saved = await reader.data();
+      assert.equal(saved.targetChanges.length, 1, 'Enter and change must not duplicate the manual event');
+      assert.equal(saved.targetChanges[0].target, 20);
+      assert.equal(saved.targetChanges[0].order, 1); assert.equal(saved.nextOrder, 2);
+      assert.equal(await reader.evaluate('document.activeElement.matches("#target-form input")'), true);
+      assert.match(await reader.text(), /Current recommendation: 20 minutes/);
+      await reader.set('#target-form input', '20');
+      assert.deepEqual(await reader.data(), saved, 'An unchanged target must not reset training success counts');
+      for (const invalid of ['', '1', '61', '2.5']) {
+        await reader.set('#target-form input', invalid);
+        assert.deepEqual(await reader.data(), saved, 'Invalid targets must leave accepted data unchanged');
+        assert.equal(await reader.evaluate('document.querySelector("#target-form input").getAttribute("aria-invalid")'), 'true');
+        assert.match(await reader.text(), /whole number from 2 to 60/);
+      }
+      await reader.set('#settings-cue', 'off');
+      assert.equal((await reader.data()).settings.cue, 'off', 'An invalid target must not block valid preference changes');
+      assert.equal((await reader.data()).targetChanges.length, 1);
+      await reader.set('#settings-cue', 'vibration');
+      await reader.click('#target-form input');
+      await reader.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+      await reader.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+      await reader.send('Input.insertText', { text: '30' });
+      assert.equal((await reader.data()).targetChanges.length, 1);
+      await reader.press('Tab');
+      assert.equal((await reader.data()).targetChanges.length, 2, 'Leaving the field must commit a valid target');
+      assert.equal((await reader.data()).targetChanges[1].target, 30);
+      assert.equal(await reader.evaluate('document.querySelector("#target-form input").hasAttribute("aria-invalid")'), false);
+      assert.equal(await reader.has('#cue-form [type=submit], #screen-form [type=submit], #target-form [type=submit]'), false);
+      for (const [width, height] of [[390,844], [844,390], [320,640], [1280,900]]) {
+        await reader.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        await reader.evaluate('scrollTo(0, 0)');
+        assert.equal(await reader.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, 'Settings must reflow without horizontal scrolling');
+        assert.ok(await reader.evaluate('document.querySelector("#settings-cue").getBoundingClientRect().height >= 48'));
+        const { cssContentSize } = await reader.send('Page.getLayoutMetrics');
+        const shot = await reader.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true,
+          clip: { x: 0, y: 0, width: cssContentSize.width, height: cssContentSize.height, scale: 1 } });
+        await writeFile(join(screenshots, `settings-${width}x${height}.png`), Buffer.from(shot.data, 'base64'));
+      }
+      await reader.evaluate('navigator.serviceWorker.ready'); await reader.send('Page.reload'); await reader.wait('#start-form');
+      assert.equal(await reader.evaluate('!!navigator.serviceWorker.controller'), true);
+      await reader.send('Network.enable');
+      await reader.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
+      await reader.send('Page.reload'); await reader.wait('#start-form'); await reader.click('[data-view=settings]');
+      assert.equal(await reader.evaluate('document.querySelector("#settings-cue").value'), 'vibration');
+      assert.equal(await reader.evaluate('document.querySelector("#keep-screen-awake").checked'), true);
+      assert.equal(await reader.evaluate('document.querySelector("#target-form input").value'), '30');
+      await reader.evaluate('testClock.shift(-86400000)');
+      await reader.click('#target-form input');
+      await reader.set('#target-form input', '45');
+      assert.match(await reader.text(), /Current recommendation: 30 minutes/, 'Replay must retain chronological target ordering');
+      await reader.press('Enter'); await reader.set('#target-form input', '45');
+      assert.equal((await reader.data()).targetChanges.length, 3, 'A saved edit must not duplicate when replay differs from it');
+    } finally { await close(reader); }
+  });
+  await test('Settings write failures preserve drafts and Retry storage saves them', async () => {
+    const reader = await page(await context(), false, origin, 'fake');
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('[data-view=settings]');
+      const accepted = await reader.data();
+      await reader.evaluate(`window.originalSet = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
+        if (key === 'reading-endurance-v1') throw new Error('quota');
+        return originalSet.call(this, key, value);
+      };`);
+      await reader.set('#settings-cue', 'sound'); await reader.click('#keep-screen-awake');
+      await reader.set('#target-form input', '20');
+      assert.deepEqual(await reader.data(), accepted);
+      assert.equal(await reader.evaluate('document.querySelector("#settings-cue").value'), 'sound');
+      assert.equal(await reader.evaluate('document.querySelector("#keep-screen-awake").checked'), true);
+      assert.equal(await reader.evaluate('document.querySelector("#target-form input").value'), '20');
+      assert.match(await reader.text(), /Current recommendation: 10 minutes/);
+      assert.match(await reader.evaluate('document.querySelector("#storage-error").textContent'), /Retry storage.*settings/);
+      assert.equal(await reader.evaluate('audioCalls.contexts'), 0, 'Choosing sound must not play or preview automatically');
+      await reader.evaluate('Storage.prototype.setItem = originalSet');
+      await reader.click('[data-action=retry-storage]');
+      const saved = await reader.data();
+      assert.equal(saved.settings.cue, 'sound'); assert.equal(saved.settings.keepScreenAwake, true);
+      assert.equal(saved.targetChanges.length, 1); assert.equal(saved.targetChanges[0].target, 20);
+      assert.match(await reader.evaluate('document.querySelector("#notice").textContent'), /Settings saved/);
+      assert.equal(await reader.evaluate('document.querySelector("#storage-error").hidden'), true);
+      await reader.click('[data-view=read]'); assert.match(await reader.text(), /Recommended: 20 minutes/);
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      assert.equal((await reader.data()).active.cue, 'sound');
+      await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]');
+      await reader.click('[data-view=settings]');
+      await reader.evaluate(`Storage.prototype.setItem = function(key, value) {
+        if (key === 'reading-endurance-v1') throw new Error('quota');
+        return originalSet.call(this, key, value);
+      };`);
+      await reader.click('#keep-screen-awake'); await reader.set('#target-form input', '30');
+      await reader.evaluate('Storage.prototype.setItem = originalSet');
+      await reader.set('#settings-cue', 'vibration');
+      assert.equal((await reader.data()).settings.keepScreenAwake, false, 'A later successful change must save earlier pending settings too');
+      assert.equal((await reader.data()).targetChanges.at(-1).target, 30);
+      assert.equal(await reader.evaluate('document.querySelector("#storage-error").hidden'), true);
+      const beforeClear = await reader.data();
+      await reader.click('[data-action=clear]');
+      await reader.evaluate(`window.failedWrites = 0; Storage.prototype.setItem = function(key, value) {
+        if (key === 'reading-endurance-v1') { failedWrites++; throw new Error('quota'); }
+        return originalSet.call(this, key, value);
+      };`);
+      await reader.click('#confirm-form [type=submit]'); await reader.press('Escape');
+      const failedBeforeRetry = await reader.evaluate('failedWrites');
+      await reader.click('[data-action=retry-storage]');
+      assert.equal(await reader.evaluate('failedWrites'), failedBeforeRetry + 1, 'Retry must test storage even when settings are unchanged');
+      assert.deepEqual(await reader.data(), beforeClear, 'Retry must not repeat a canceled destructive action');
+      await reader.evaluate('Storage.prototype.setItem = originalSet'); await reader.click('[data-action=retry-storage]');
+      assert.equal(await reader.evaluate('document.querySelector("#storage-error").hidden'), true);
+    } finally { await close(reader); }
+  });
+  await test('changing the auto-saved cue cancels a pending sound preview', async () => {
+    const reader = await page(await context(), true);
+    try {
+      await reader.set('#setup-cue', 'sound'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
+      await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]');
+      await reader.click('[data-view=settings]');
+      const before = await reader.evaluate('audioCalls.tones');
+      await reader.evaluate(`const originalResume = AudioContext.prototype.resume;
+        AudioContext.prototype.resume = function() {
+          return originalResume.call(this).then(() => new Promise(resolve => { window.releasePreviewAudio = resolve; }));
+        };`);
+      await reader.click('[data-action=preview]');
+      await until(() => reader.evaluate('typeof releasePreviewAudio === "function"'), 'native audio resumes while preview remains pending');
+      await reader.set('#settings-cue', 'off');
+      await reader.evaluate('releasePreviewAudio(); new Promise(resolve => setTimeout(resolve, 0))');
+      assert.equal(await reader.evaluate('audioCalls.tones'), before, 'A changed cue must cancel the old pending preview');
+      assert.equal((await reader.data()).settings.cue, 'off');
+      assert.equal((await reader.data()).active, null, 'Preview must never start a read');
+    } finally { await close(reader); }
+  });
   await test('screen wake preference persists and follows running, paused and visible reading', async () => {
     const reader = await page(await context(), false, origin, 'fake');
     try {
@@ -385,7 +534,6 @@ try {
       assert.ok(ax.nodes.some(node => node.role?.value === 'checkbox' && node.name?.value === 'Keep screen awake while reading'));
       await reader.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
       await reader.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
-      await reader.click('#screen-form [type=submit]');
       assert.equal((await reader.data()).settings.keepScreenAwake, true);
       assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Enabling the setting must not wake an idle screen');
       await reader.send('Page.reload'); await reader.wait('#start-form');
@@ -416,7 +564,7 @@ try {
       assert.equal(await reader.evaluate('wakeSentinels[3].released'), true);
       assert.equal((await reader.data()).active.activeMs, 7000, 'Wake locks must not change active-time arithmetic');
       await reader.click('#feedback-form [name=skip]'); await reader.click('[data-view=settings]');
-      await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]');
+      await reader.click('#keep-screen-awake');
       await reader.click('[data-view=read]'); await reader.click('#start-form [type=submit]');
       assert.equal(await reader.evaluate('wakeRequests.length'), 4, 'Turning the preference off must stop subsequent requests');
     } finally { await close(reader); }
@@ -425,7 +573,7 @@ try {
     const reader = await page(await context(), false, origin, 'fake');
     try {
       await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
-      await reader.click('[data-view=settings]'); await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]');
+      await reader.click('[data-view=settings]'); await reader.click('#keep-screen-awake');
       await reader.click('[data-view=read]'); await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
       await reader.evaluate('wakeSentinels[0].release()');
       await reader.evaluate('testClock.shift(60000)'); await reader.advance(5000);
@@ -438,7 +586,7 @@ try {
     const reader = await page(await context(), false, origin, 'fake');
     try {
       await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
-      await reader.click('[data-view=settings]'); await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]');
+      await reader.click('[data-view=settings]'); await reader.click('#keep-screen-awake');
       await reader.click('[data-view=read]'); await reader.evaluate('wakeResult = "pending"');
       await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
       await until(() => reader.evaluate('wakePending.length === 1'), 'screen request is pending');
@@ -488,7 +636,7 @@ try {
           await reader.evaluate('const d = JSON.parse(localStorage.getItem("reading-endurance-v1")); d.settings.keepScreenAwake = true; localStorage.setItem("reading-endurance-v1",JSON.stringify(d))');
           await reader.send('Page.reload'); await reader.wait('#start-form');
         } else {
-          await reader.click('#keep-screen-awake'); await reader.click('#screen-form [type=submit]'); await reader.click('[data-view=read]');
+          await reader.click('#keep-screen-awake'); await reader.click('[data-view=read]');
           await reader.evaluate(`wakeResult = ${JSON.stringify(mode)}`);
         }
         await reader.click('#start-form [type=submit]'); await reader.wait('#timer');
@@ -1097,7 +1245,7 @@ try {
     } finally { await close(editor); }
   });
   await test('skipping invalid feedback is allowed; external reasons and manual target changes hold', async () => {
-    await p.click('[data-view=settings]'); await p.set('#target-form input', '20'); await p.click('#target-form [type=submit]');
+    await p.click('[data-view=settings]'); await p.set('#target-form input', '20');
     assert.equal((await p.data()).targetChanges.at(-1).target, 20);
     await p.click('[data-view=read]'); await p.click('input[name=mode][value=train]');
     assert.equal(await p.evaluate('document.querySelector("#session-target").value'), '20');

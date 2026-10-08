@@ -98,12 +98,13 @@ After saving or discarding a read, the navigation offers:
 - **Progress** for reading totals and history. **Show earlier reads** reveals older
   history. Each saved read has **Edit feedback** and **Delete…** controls. Edits and
   deletions recalculate the training recommendation.
-- **Settings** to change **Reading cue**, preview it, and **Save cue setting**, or
-  enter a new recommendation and select **Set training target**. Cues can stay Off;
+- **Settings** to change **Reading cue**, preview it, or enter a new recommendation.
+  Changes save automatically; a training target saves when you leave the field or
+  press Enter. Targets must be whole minutes from 2 to 60. Cues can stay Off;
   unavailable vibration never switches to sound automatically.
 
 To prevent automatic screen sleep, open **Settings → Screen**, check **Keep screen
-awake while reading**, and select **Save screen setting**. This is off by default
+awake while reading**. The preference saves immediately. This is off by default
 and uses more battery. When supported, it keeps the screen awake only during a
 visible, running read; Pause, Finish, leaving the page, or backgrounding releases
 it. Resume or returning to the foreground requests it again. A recovered read
@@ -135,9 +136,10 @@ it. **Clear all local data…** also removes all of those items after confirmati
   and interrupted. After **Finish**, duration is frozen; save your feedback before
   closing because unsubmitted answers are not restored on reload.
 - If saving fails, keep the page open, check that your browser allows local storage,
-  choose **Retry storage**, then submit the unsaved form again. An export does not
-  include answers still in the form. Do not clear browser data to fix a save error
-  unless you intend to remove your local history.
+  and choose **Retry storage**. In Settings, this saves the valid changes still
+  shown in the controls; for other forms, submit the unsaved form again. An export
+  does not include unsaved settings or form answers. Do not clear browser data to
+  fix a save error unless you intend to remove your local history.
 - If the app says **Open in another tab**, close the other Reading Endurance tab
   or window, then choose **Try again**. Only one can manage reads at a time.
 
@@ -613,7 +615,13 @@ write leaves the accepted model unchanged and the entered form available.
 Live clock transitions mutate the active in-memory object before writing; on a
 failure, it can be newer than storage. An affected running read pauses, and the UI
 shows a storage error rather than claiming durability. Retry saves the current
-model; failed form transactions still need to be submitted again.
+model; failed form transactions still need to be submitted again. Settings changes
+save on control change or Enter without rerendering, preserving focus and scroll.
+They save the valid values currently shown together, including earlier failed
+changes; Retry storage does the same. Invalid targets stay unsaved with an
+accessible error while valid cue/screen preferences can still save. Target events
+are added only for a changed, accepted value, so duplicate change/submit events do
+not reset the Comfortable count or duplicate history.
 While running or paused, `clock.session` and `db.active` must be the same object.
 Replacing the model with a detached storage snapshot would separate clock updates
 from the displayed/persisted read. Start, recovery, and completion explicitly
@@ -626,8 +634,8 @@ reset. Import, discard, delete, and clear actions require explicit confirmation.
 
 Normal export downloads the current in-memory model as
 `reading-endurance-v1.json`. It includes accepted records and any pending read,
-but **does not include unsaved feedback edits or preparation form values**. For
-unreadable data, export retrieves the original stored string as
+but **does not include unsaved settings, feedback edits, or preparation form
+values**. For unreadable data, export retrieves the original stored string as
 `reading-endurance-original-data.json`; that file may not be valid JSON.
 If storage cannot be read at all, that export can also fail.
 
@@ -845,7 +853,7 @@ and worker queries require their APIs and a supported context.
 | Offline launch fails | Verify a successful install, exact scope/asset paths, and required cache entries. First visit needs network; arbitrary URLs are not navigation fallbacks. |
 | A cue is missing | Inspect channel availability, document visibility, signal flags, and `ReadingClock.sample()` punctuality. API exposure/attempt flags do not prove output. Never replay a passed deadline as a debugging “fix.” |
 | Duration needs confirmation | Compare monotonic/wall deltas in `ReadingClock.sample()`; recovery and clock/sleep ambiguity deliberately mark uncertainty. |
-| Save fails | Break in `persist()` and inspect quota/blocked storage, candidate validation, and ownership. Keep the page open; Retry storage, then resubmit unsaved form changes. Export excludes those form drafts. |
+| Save fails | Break in `persist()` and inspect quota/blocked storage, candidate validation, and ownership. Keep the page open; Retry storage saves valid Settings changes, while other forms need resubmission. Export excludes those drafts. |
 | Recommendation seems unexpected | Inspect chosen versus prescribed targets, interruption/uncertainty/outcome, manual events, and finish/order sorting. Call `recommend()` with a small synthetic history in a unit test. |
 | Focus disappears after a transition | Inspect `render()`, `renderReadingInPlace()`, the dialog close handler, and whether the previously focused control was replaced/disabled. |
 | Browser test fails or hangs | Read the first assertion/timeout and Chrome startup stderr; check executable path and CDP compatibility. Rerun with `SCREENSHOT_DIR` outside the repository for retained images. |

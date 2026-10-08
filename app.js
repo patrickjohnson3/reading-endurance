@@ -75,7 +75,9 @@ function persist(next = db) {
     storageFailed = true;
     if (clock?.session.state === 'running') clock.pause(performance.now(), Date.now());
     releaseScreenWakeLock();
-    showError('Local storage could not be written. This read is paused if it was running. Changes are not saved. Keep this page open and retry storage, then submit any unsaved form changes again. Exports do not include unsaved form answers.');
+    showError(view === 'settings' && !dialog.open
+      ? 'Local storage could not be written. Changes are not saved. Keep this page open and choose Retry storage to save your settings. Exports do not include unsaved setting changes.'
+      : 'Local storage could not be written. This read is paused if it was running. Changes are not saved. Keep this page open and retry storage, then submit any unsaved form changes again. Exports do not include unsaved form answers.');
     return false;
   }
 }
@@ -261,14 +263,15 @@ function renderProgress() {
 
 function renderSettings() {
   return `<p class="eyebrow">Make it work for you</p><h1>Settings.</h1>
+    <p class="help">Changes save automatically. For a training target, leave the field or press Enter.</p>
     <form id="cue-form" class="panel"><h2>One quiet confidence cue</h2>${cueSelect('settings-cue', db.settings.cue)}
-    <p class="help">Cues need this page visible and the screen unlocked. Sound, vibration, silent mode, and Do Not Disturb depend on your browser and device. A target cue is separate, default-off, and selected before a Train read.</p><button type="submit" class="primary">Save cue setting</button></form>
+    <p class="help">Cues need this page visible and the screen unlocked. Sound, vibration, silent mode, and Do Not Disturb depend on your browser and device. A target cue is separate, default-off, and selected before a Train read.</p></form>
     <form id="screen-form" class="panel"><h2>Screen</h2>
     <label class="check"><input type="checkbox" id="keep-screen-awake" name="keepScreenAwake" ${db.settings.keepScreenAwake ? 'checked' : ''} ${!screenWakeAvailable ? 'disabled' : ''} aria-describedby="screen-wake-help"><span>Keep screen awake while reading</span></label>
     <p class="help" id="screen-wake-help">${screenWakeAvailable ? 'Off by default. Prevents automatic screen sleep only while this page is visible and a read is running. Uses more battery. You can still lock the screen manually; your browser or device may refuse or release the wake lock.' : 'Keeping the screen awake is unavailable in this browser. Reads and cues still work without it; use your device’s screen timeout setting if needed.'}</p>
-    <button type="submit" ${!screenWakeAvailable ? 'disabled' : ''}>Save screen setting</button></form>
-    <form id="target-form" class="panel"><h2>Training target</h2><p>Current recommendation: ${rec()} minutes.</p><label class="field"><span>Set a new recommendation</span><div class="row"><input type="number" name="target" min="2" max="60" step="1" value="${rec()}" required><span>minutes</span></div></label>
-    <p class="help">A manual change is saved in order with your reads and resets the Comfortable count. You can keep reading beyond 60 minutes.</p><button type="submit">Set training target</button></form>
+    </form>
+    <form id="target-form" class="panel"><h2>Training target</h2><p>Current recommendation: <span id="settings-recommendation">${rec()}</span> minutes.</p><label class="field"><span>Set a new recommendation</span><div class="row"><input type="number" name="target" min="2" max="60" step="1" value="${rec()}" required aria-describedby="settings-target-help"><span>minutes</span></div></label>
+    <p class="help" id="settings-target-help">Choose a whole number from 2 to 60. A manual change is saved in order with your reads and resets the Comfortable count. You can keep reading beyond 60 minutes.</p></form>
     <section class="panel"><h2>Your local data</h2><p>No sync, telemetry, or external transmission. Browser data can be cleared or evicted. Keep an export if your history matters to you.</p>
     <div class="actions"><button type="button" data-action="export">Export JSON</button><label class="file-label">Import JSON…<input class="file-input" type="file" id="import-file" accept="application/json,.json"></label></div>
     <p class="help">Versioned exports include settings, history, manual target changes, and any pending read. Import replaces local data after confirmation.</p>
@@ -479,26 +482,52 @@ function saveFeedback(form, skip, editedId) {
   } catch (error) { announce(error.message); }
 }
 
+function saveSettings(retry = false) {
+  if (!locked || corrupt || db.active || view !== 'settings') return false;
+  const cue = $('#settings-cue');
+  const screen = $('#keep-screen-awake');
+  const target = $('#target-form input');
+  if (!cue || !screen || !target || !CUES.includes(cue.value)) return false;
+  const wasInvalid = target.hasAttribute('aria-invalid');
+  const validTarget = target.checkValidity();
+  if (validTarget) target.removeAttribute('aria-invalid');
+  else target.setAttribute('aria-invalid', 'true');
+  const invalidMessage = 'Enter a whole number from 2 to 60 minutes. The training target has not changed.';
+  // Retain the last accepted edit even if clock changes affect chronological replay.
+  const targetChanged = validTarget && Number(target.value) !== Number(target.defaultValue);
+  const screenChanged = !screen.disabled && screen.checked !== db.settings.keepScreenAwake;
+  if (cue.value === db.settings.cue && !screenChanged && !targetChanged && !storageFailed && !retry) {
+    if (!validTarget) announce(invalidMessage);
+    else if (wasInvalid) announce('Training target unchanged.');
+    return validTarget;
+  }
+  const next = structuredClone(db);
+  next.settings.cue = cue.value;
+  if (!screen.disabled) next.settings.keepScreenAwake = screen.checked;
+  if (targetChanged) next.targetChanges.push({ kind: 'target', id: crypto.randomUUID(),
+    at: Date.now(), order: next.nextOrder++, target: Number(target.value) });
+  if (!persist(next)) return false;
+  if (targetChanged) {
+    target.defaultValue = target.value;
+    $('#settings-recommendation').textContent = rec();
+  }
+  announce(validTarget ? 'Settings saved.' : invalidMessage);
+  return validTarget;
+}
+
 document.addEventListener('submit', event => {
   const form = event.target;
   if (!['setup-form', 'start-form', 'cue-form', 'screen-form', 'target-form', 'feedback-form', 'recovery-form', 'edit-form'].includes(form.id)) return;
   event.preventDefault();
   if (!locked || corrupt) return;
+  if (['cue-form', 'screen-form', 'target-form'].includes(form.id)) { saveSettings(); return; }
   const values = new FormData(form);
-  if (form.id === 'setup-form' || form.id === 'cue-form') {
+  if (form.id === 'setup-form') {
     const next = structuredClone(db);
     next.settings.cue = values.get('cue');
     if (!CUES.includes(next.settings.cue)) return;
-    if (form.id === 'setup-form') { next.settings.setup = true; next.settings.initialTarget = Number(values.get('initialTarget')); }
-    if (persist(next)) { render(); announce(form.id === 'cue-form' ? 'Cue setting saved.' : 'Ready when you are.'); }
-  } else if (form.id === 'screen-form') {
-    const next = structuredClone(db);
-    next.settings.keepScreenAwake = form.elements.keepScreenAwake.checked;
-    if (persist(next)) { render(); announce('Screen setting saved.'); }
-  } else if (form.id === 'target-form') {
-    const next = structuredClone(db);
-    next.targetChanges.push({ kind: 'target', id: crypto.randomUUID(), at: Date.now(), order: next.nextOrder++, target: Number(values.get('target')) });
-    if (persist(next)) { render(); announce('Training target saved.'); }
+    next.settings.setup = true; next.settings.initialTarget = Number(values.get('initialTarget'));
+    if (persist(next)) { render(); announce('Ready when you are.'); }
   } else if (form.id === 'start-form') startRead(form);
   else if (form.id === 'feedback-form' || form.id === 'edit-form') saveFeedback(form, event.submitter?.name === 'skip', form.dataset.id);
   else if (form.id === 'recovery-form') {
@@ -511,6 +540,7 @@ document.addEventListener('submit', event => {
 });
 
 document.addEventListener('change', async event => {
+  if (['cue-form', 'screen-form', 'target-form'].includes(event.target.form?.id)) { saveSettings(); return; }
   if (event.target.name === 'mode') {
     mode = event.target.value;
     $('#train-controls').hidden = mode !== 'train';
@@ -563,6 +593,11 @@ document.addEventListener('click', async event => {
   if (action === 'retry-lock') { acquire(); return; }
   if (action === 'retry-storage') {
     if (corrupt) load();
+    else if (view === 'settings' && !db.active && !dialog.open) {
+      if (saveSettings(true)) {
+        main.focus({ preventScroll: true }); announce('Settings saved.');
+      } else if ($('#target-form input[aria-invalid]')) $('#target-form input').focus();
+    }
     else if (persist()) {
       // Preserve unsaved form values. A failed form transaction must be submitted again.
       if (db.active && ['running', 'paused'].includes(db.active.state)) render();
@@ -594,7 +629,7 @@ document.addEventListener('click', async event => {
     const selected = $(`#${button.dataset.select}`).value;
     if (selected === 'off') { announce('Cue is Off. Select vibration or sound to preview.'); return; }
     if (selected === 'sound' && !await prepareAudio()) { announce('Sound could not be enabled. Check your browser and device settings.'); return; }
-    if (db.active || !button.isConnected) return;
+    if (db.active || !button.isConnected || $(`#${button.dataset.select}`).value !== selected) return;
     const requested = deliverCue('confidence', selected);
     announce(requested ? 'Preview requested. Your browser and device may suppress it.' : 'Preview could not be requested. The app still works with cues off.');
   } else if (action === 'pause' && clock) {
