@@ -89,10 +89,12 @@ remaining device checks as described in the README.
   A running/paused clock must reference the same object as `db.active`.
   `LocalStore.save()` writes a normalized snapshot without returning a model;
   callers retain ownership of their accepted/candidate state.
-- Derive active duration from monotonic timestamp differences, excluding pauses;
-  interval callbacks only refresh/checkpoint. Finish must freeze time immediately
-  and remain available while paused. Recovery must require duration confirmation,
-  never add time since a crash automatically, and retain uncertainty/interruption.
+- Derive active duration from timestamps, excluding pauses. Use monotonic differences
+  normally; across hidden live intervals, use longer wall elapsed time when the
+  clocks disagree and retain uncertainty/duration confirmation. Never count the
+  same gap twice. Interval callbacks only refresh/checkpoint. Finish must freeze
+  time immediately and remain available while paused. Recovery must require duration
+  confirmation, never add time since a crash automatically, and retain uncertainty/interruption.
 - Attempt the confidence cue at most once at 120 active seconds. Keep deadline
   passed separate from delivery attempted. Never replay missed cues after finish,
   recovery, suspension, or clock ambiguity. Preview must not start a session.

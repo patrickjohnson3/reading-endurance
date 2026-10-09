@@ -113,6 +113,48 @@ test('wall clock changes do not inflate or reverse active duration; uncertainty 
   }
 });
 
+test('live reads include screen-lock time even when the monotonic clock stops or advances only partly', () => {
+  for (const monoDuringLock of [0, 5000, 600000]) {
+    const { session, clock } = live({ targetCue: true });
+    clock.sample(540000, 1540000);
+    clock.sample(540000, 1540000, { visible: false, allowCue: false });
+    assert.deepEqual(clock.sample(540000 + monoDuringLock, 2140000, { resumed: true }), []);
+    assert.equal(session.activeMs, 1140000, 'Nine minutes plus ten locked minutes must be nineteen minutes');
+    assert.equal(session.state, 'running', 'Reaching the target must not end the read');
+    assert.equal(session.uncertain, monoDuringLock !== 600000);
+    assert.equal(session.targetSignal.passed, true);
+    assert.equal(session.targetSignal.attempted, false);
+    clock.sample(540000 + monoDuringLock, 2140000, { resumed: true });
+    clock.sample(541000 + monoDuringLock, 2141000);
+    assert.equal(session.activeMs, 1141000, 'Repeated lifecycle samples must not count a gap twice');
+  }
+  const finishing = live();
+  finishing.clock.sample(540000, 1540000, { visible: false });
+  finishing.clock.finish(540000, 2140000);
+  assert.equal(finishing.session.activeMs, 1140000, 'Finish must catch up even before a foreground timer callback');
+  assert.equal(finishing.session.state, 'awaiting-feedback');
+});
+
+test('wall fallback cannot count paused or finished time, carry a hidden baseline through Resume, or reverse time', () => {
+  const { session, clock } = live();
+  clock.pause(540000, 1540000);
+  clock.sample(540000, 2140000, { visible: false, resumed: true });
+  assert.equal(session.activeMs, 540000, 'Ten locked minutes while paused must not count');
+  clock.resume(540000, 2140000);
+  clock.sample(541000, 2741000); // A forward wall adjustment in the new foreground interval.
+  assert.equal(session.activeMs, 541000, 'Resume must discard visibility from the paused interval');
+  clock.pause(541000, 2741000);
+  clock.finish(541000, 3341000);
+  clock.sample(541000, 3941000, { visible: false });
+  assert.equal(session.activeMs, 541000, 'Finish while paused must freeze the duration');
+
+  const backward = live();
+  backward.clock.sample(60000, 1060000, { visible: false });
+  backward.clock.sample(61000, 1000, { resumed: true });
+  assert.equal(backward.session.activeMs, 61000, 'A backward wall adjustment must not subtract active time');
+  assert.equal(backward.session.uncertain, true);
+});
+
 test('recovery uses confirmed duration, excludes downtime, and suppresses all remaining cues', () => {
   const { session } = live({ target: 5, targetCue: true });
   session.activeMs = 60000;
@@ -131,16 +173,19 @@ test('recovery uses confirmed duration, excludes downtime, and suppresses all re
   assert.equal(recovered.targetSignal.passed, true);
 });
 
-test('sleep-clock ambiguity before the deadline suppresses later apparent crossings', () => {
+test('sleep catch-up crosses confidence without delivery and suppresses a later target', () => {
   const { session, clock } = live({ target: 3, targetCue: true });
   clock.sample(60000, 1060000);
-  clock.sample(60000, 2860000, { resumed: true }); // wall advances through sleep; monotonic does not
-  assert.equal(session.activeMs, 60000);
+  clock.sample(60000, 1060000, { visible: false });
+  assert.deepEqual(clock.sample(60000, 1120000, { resumed: true }), []); // One minute of sleep.
+  assert.equal(session.activeMs, 120000);
   assert.equal(session.uncertain, true);
-  clock.sample(119000, 2919000);
-  assert.deepEqual(clock.sample(120000, 2920000), []);
-  clock.sample(179000, 2979000);
-  assert.deepEqual(clock.sample(180000, 2980000), []);
+  assert.equal(session.confidence.passed, true);
+  assert.equal(session.targetSignal.passed, false);
+  clock.sample(119000, 1179000);
+  assert.deepEqual(clock.sample(120000, 1180000), []);
+  assert.equal(session.activeMs, 180000);
+  assert.equal(session.targetSignal.passed, true);
   assert.equal(session.confidence.attempted, false);
   assert.equal(session.targetSignal.attempted, false);
 });

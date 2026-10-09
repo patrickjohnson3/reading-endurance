@@ -1148,6 +1148,41 @@ try {
       if (secondary) await close(secondary);
     }
   });
+  await test('a live read catches up after screen-lock sleep, confirms duration and never replays missed cues', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.evaluate('navigator.serviceWorker.ready'); await reader.send('Page.reload'); await reader.wait('#setup-form');
+      assert.equal(await reader.evaluate('!!navigator.serviceWorker.controller'), true, 'Exercise the cached app shell');
+      await reader.set('#setup-cue', 'vibration'); await reader.click('#setup-form [type=submit]');
+      for (const [beforeLock, afterLock] of [[9, 19], [1, 11]]) {
+        await reader.click('input[name=mode][value=train]'); await reader.click('#target-cue');
+        await reader.click('#start-form [type=submit]'); await reader.wait('#timer'); await reader.advance(beforeLock * 60000);
+        await reader.evaluate(`testVisible(false); document.dispatchEvent(new Event('freeze'));
+          testClock.shift(600000); document.dispatchEvent(new Event('resume')); testVisible(true);`);
+        assert.equal(await reader.evaluate('document.querySelector("#timer").textContent'), `${afterLock}:00`);
+        const running = (await reader.data()).active;
+        assert.equal(running.activeMs, afterLock * 60000);
+        assert.equal(running.state, 'running'); assert.equal(running.uncertain, true);
+        assert.equal(running.confidence.passed, true); assert.equal(running.confidence.attempted, false);
+        assert.equal(running.targetSignal.passed, true); assert.equal(running.targetSignal.attempted, false);
+        await reader.evaluate(`document.dispatchEvent(new Event('resume')); testVisible(true);`);
+        assert.equal((await reader.data()).active.activeMs, running.activeMs, 'Repeated resume events must not double-count sleep');
+        await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+        assert.equal(await reader.evaluate('document.querySelector("[name=corrected]").value'), String(afterLock));
+        await reader.advance(60000);
+        assert.equal((await reader.data()).active.activeMs, running.activeMs, 'Finish must freeze the caught-up duration');
+        await reader.set('[name=corrected]', ''); await reader.click('#feedback-form [name=skip]');
+        assert.equal(await reader.has('#feedback-form'), true, 'Ambiguous sleep time still requires confirmation');
+        await reader.set('[name=corrected]', String(afterLock)); await reader.click('input[value=comfortable]');
+        await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+        const saved = (await reader.data()).sessions.at(-1);
+        assert.equal(saved.activeMs, afterLock * 60000);
+        assert.equal(saved.uncertain, true); assert.equal(saved.interruptions, 1);
+        assert.match(await reader.text(), /Recommended: 10 minutes/, 'Uncertain reads must not advance training');
+        assert.equal(await reader.evaluate('cueCalls.length'), 0, 'Neither deadline may emit a late cue');
+      }
+    } finally { await close(reader); }
+  });
   await test('hidden deadline does not emit a late cue on return', async () => {
     await p.click('#start-form [type=submit]'); await p.wait('#timer'); await p.advance(119000);
     await p.evaluate('testVisible(false)'); await p.advance(1000); await p.evaluate('testVisible(true)');

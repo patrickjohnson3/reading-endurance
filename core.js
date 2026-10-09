@@ -82,12 +82,13 @@ export function newSession({ id, owner, mode, target, prescribed, cue, confidenc
     targetSignal: { passed: false, attempted: false, suppressed: false } };
 }
 
-// The live clock integrates monotonic timestamp differences, never callback counts.
+// The live clock uses timestamps, never callback counts; hidden sleep gaps use wall time.
 export class ReadingClock {
   constructor(session, mono, wall) {
     this.session = session;
     this.mono = mono;
     this.wall = wall;
+    this.visible = true;
   }
   sample(mono, wall, { visible = true, resumed = false, allowCue = true } = {}) {
     const s = this.session;
@@ -95,7 +96,9 @@ export class ReadingClock {
     const wallDelta = wall - this.wall;
     const clockChanged = Math.abs(wallDelta - delta) > 2000;
     if (s.state === 'running') {
-      s.activeMs += delta;
+      // Catch up after screen lock when the monotonic clock stopped. Wall changes
+      // during a hidden interval are indistinguishable from sleep, so confirm below.
+      s.activeMs += clockChanged && (!this.visible || !visible) ? Math.max(delta, wallDelta) : delta;
       // Sleep/clock ambiguity is never silently promoted to continuous engagement.
       if (clockChanged) {
         s.uncertain = true;
@@ -104,6 +107,7 @@ export class ReadingClock {
         s.targetSignal.suppressed = true;
       }
     }
+    this.visible = visible;
     this.mono = mono;
     this.wall = wall;
     s.checkpointAt = wall;
@@ -141,6 +145,7 @@ export class ReadingClock {
     if (this.session.state !== 'paused') return;
     this.mono = mono;
     this.wall = wall;
+    this.visible = true;
     this.session.state = 'running';
     this.session.checkpointAt = wall;
   }

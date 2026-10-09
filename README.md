@@ -130,6 +130,11 @@ it. **Clear all local data…** also removes all of those items after confirmati
 - **Pause** excludes paused time and marks the read interrupted. You can **Resume**
   or **Finish** while paused. Interrupted reads count toward total time, but do not
   change training or set longest-engaged records.
+- Locking the screen does not pause a live read. When you return, the timer catches
+  up, even if the browser's elapsed clock stopped during sleep. If the clocks
+  disagreed, confirm or correct the duration after **Finish**; that read remains
+  uncertain and does not change training or longest-engaged records. Missed cues
+  are not replayed. If the browser closed the page, use recovery instead.
 - If an unfinished read reappears after closing or reloading, confirm or correct
   the minutes you actually read and choose **Recover as paused**, or discard it.
   Time while the app was closed is not added. Recovered reads stay marked uncertain
@@ -417,10 +422,11 @@ Rotation changes no timing state.
 
 ## Timing and recovery
 
-Within one live document, elapsed time is the sum of monotonic `performance.now()`
+Within one live document, elapsed time normally uses monotonic `performance.now()`
 differences during active intervals. Interval callbacks only repaint and
 checkpoint; their count does not determine duration. Paused time is excluded.
-Wall timestamps record calendar dates and checkpoints, not live elapsed seconds.
+Wall timestamps record calendar dates/checkpoints and provide a sleep fallback
+for live hidden intervals, as described below.
 
 On reload/unclean close, the default recovery duration is **only the last saved
 active duration**. Hours since a checkpoint are never added automatically. The
@@ -429,11 +435,21 @@ starts paused, marks uncertainty and interruption, suppresses all later cues, an
 excludes that read from progression and longest engaged records. A durably finished
 read reloads into pending feedback with the same frozen duration.
 
-On some platforms the monotonic clock does not advance through system sleep. A
-wall/monotonic discrepancy over two seconds marks the interval uncertain, while
-preserving monotonic arithmetic. The reader must confirm/correct duration before
-saving. This also handles device wall-clock adjustments without inflating or
-reversing duration. Timing ambiguity is retained in history.
+On some platforms the monotonic clock does not advance through system sleep.
+When a running interval includes a hidden page and the clocks disagree by more
+than two seconds, the clock adds the longer of the monotonic and wall intervals.
+For example, nine minutes followed by ten minutes locked displays nineteen minutes
+on return, even if the monotonic clock stopped. Each sample resets both baselines,
+so repeated resume/visibility events cannot add the same gap again. Resume after
+Pause starts a new foreground interval; paused time and time after Finish never count.
+
+Any wall/monotonic disagreement over two seconds still marks the read uncertain
+and suppresses remaining cues. Sleep and wall-clock changes cannot be distinguished
+reliably here; the reader must confirm/correct the duration before saving, and the
+read stays excluded from training and longest-engaged records. A backward wall
+adjustment never subtracts reading time. While the page stays visible, wall
+adjustments do not change the monotonic duration. This fallback does not apply to
+reload/crash recovery. Timing ambiguity is retained in history.
 
 Confidence deadline crossing and delivery attempted are separate persisted flags.
 A deadline can pass with cues off or with no delivery. A cue is attempted at most
@@ -597,8 +613,8 @@ saved/manual event. Deletion leaves order gaps.
 
 Recommendations, comfortable-success counters, totals, chart widths, and longest
 records are derived, not persisted. In-memory view/mode selection and history range,
-the live clock's monotonic baseline, audio nodes, Web Lock/wake-lock state, error
-state, and unsaved form values also do not belong to the JSON schema.
+the live clock's time baselines and visibility, audio nodes, Web Lock/wake-lock
+state, error state, and unsaved form values also do not belong to the JSON schema.
 
 ### Validation, transactions, and data tools
 
