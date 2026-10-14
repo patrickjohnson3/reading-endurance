@@ -46,6 +46,7 @@ select { width: 100%; }
 .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
 .actions { display: flex; gap: .75rem; margin-top: 1.4rem; flex-wrap: wrap; }
 .wide { width: 100%; }
+#recovery-form { margin-bottom: .75rem; }
 .notice { max-width: 760px; margin: 1rem auto 0; border: 1px solid #9aad99; background: var(--wash); padding: .8rem 1rem; border-radius: 10px; font-size: .9rem; }
 .error { background: #fff0e7; border-color: #b37b62; color: #73291c; }
 .error p:last-child { margin-bottom: 0; }

@@ -286,6 +286,218 @@ try {
     await p.wait('#start-form');
     assert.equal((await p.data()).settings.initialTarget, 10);
   });
+  await test('recovery rounds only its display, preserves untouched time and honors explicit edits', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.evaluate('navigator.serviceWorker.ready');
+      for (const [savedMs, display, edits, expectedMs] of [
+        [578038.4, '9.6', [], 578038.4],
+        [578038.4, '9.6', ['9.6'], 576000],
+        [578038.4, '9.6', ['8', '9.6'], 576000],
+        [2400, '0.0', [], 2400],
+        [9000, '0.2', [], 9000],
+        [604797600, '10080.0', [], 604797600],
+        [60000, '1.0', ['1.23456789'], 74074.0734]
+      ]) {
+        await reader.click('#start-form [type=submit]'); await reader.advance(savedMs);
+        const before = (await reader.data()).active;
+        await reader.send('Network.enable');
+        await reader.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
+        await reader.send('Page.reload'); await reader.wait('#recovery-form');
+        assert.equal(await reader.evaluate('!!navigator.serviceWorker.controller'), true, 'Recovery must work from the offline cached shell');
+        assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").value'), display);
+        assert.match(await reader.text(), /Welcome back\./);
+        assert.doesNotMatch(await reader.evaluate('document.querySelector("#main").textContent'), /checkpoint|uncertain|training|cue|left open|pick up/i);
+        for (const entered of edits) {
+          await reader.evaluate(`(() => {
+            const input = document.querySelector('#recovery-form input');
+            input.value = ${JSON.stringify(entered)};
+            input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+          })()`);
+        }
+        await reader.click('#recovery-form [type=submit]'); await reader.wait('[data-action=pause]');
+        const recovered = (await reader.data()).active;
+        assert.equal(recovered.state, 'running', 'Continue must resume without a second click');
+        assert.equal(recovered.id, before.id);
+        assert.ok(Math.abs(recovered.activeMs - expectedMs) < 0.000001);
+        if (!edits.length) assert.equal(recovered.activeMs, savedMs, 'The rounded display must never replace untouched milliseconds');
+        assert.equal(recovered.uncertain, true);
+        assert.equal(recovered.interruptions, Math.max(1, before.interruptions));
+        assert.equal(recovered.confidence.suppressed, true);
+        assert.equal(recovered.targetSignal.suppressed, true);
+        await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+        assert.ok(Math.abs((await reader.data()).sessions.at(-1).activeMs - expectedMs) < 0.000001);
+      }
+    } finally { await close(reader); }
+  });
+  await test('recovery retries preserve edits and start fresh after writes and a second interruption', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'vibration'); await reader.click('#setup-form [type=submit]');
+      await reader.click('[name=mode][value=train]'); await reader.click('#start-form [type=submit]');
+      await reader.advance(600000); await reader.click('[data-action=finish]');
+      await reader.click('[value=comfortable]'); await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+      await reader.set('#session-target', '8'); await reader.click('#start-form [type=submit]');
+      await reader.advance(119000); await reader.advance(1000); await reader.advance(458038.4);
+      const checkpoint = await reader.data();
+      assert.equal(checkpoint.active.confidence.attempted, true);
+      await reader.send('Page.reload'); await reader.wait('#recovery-form');
+      await reader.advance(120000);
+      assert.deepEqual(await reader.data(), checkpoint, 'Waiting on recovery must not add reading time');
+      await reader.set('#recovery-form input', '8.25');
+      await reader.evaluate(`window.recoveryOriginalSet = Storage.prototype.setItem; window.recoveryWrite = 'fail';
+        Storage.prototype.setItem = function(key, value) {
+          if (key === 'reading-endurance-v1' && recoveryWrite !== 'normal') {
+            testClock.advance(15000);
+            if (recoveryWrite === 'fail') throw new Error('quota');
+            recoveryWrite = 'normal';
+          }
+          return recoveryOriginalSet.call(this, key, value);
+        };`);
+      await reader.click('#recovery-form [type=submit]');
+      assert.equal(await reader.has('#recovery-form'), true);
+      assert.equal(await reader.has('[data-action=pause]'), false);
+      assert.deepEqual(await reader.data(), checkpoint, 'A failed resume must retain the recoverable checkpoint');
+      await reader.advance(180000);
+      await reader.evaluate("recoveryWrite = 'normal'"); await reader.click('[data-action=retry-storage]');
+      assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").value'), '8.25', 'Retry must retain the explicit edit');
+      assert.deepEqual(await reader.data(), checkpoint, 'Retry must not accept an unsubmitted correction');
+      await reader.advance(120000);
+      await reader.evaluate("recoveryWrite = 'slow'; window.oldRecoveryForm = document.querySelector('#recovery-form');");
+      await reader.click('#recovery-form [type=submit]'); await reader.wait('[data-action=pause]');
+      assert.equal((await reader.data()).active.activeMs, 495000, 'Failed attempts, recovery-screen time and successful write time are excluded');
+      assert.equal((await reader.data()).active.state, 'running');
+      assert.equal(await reader.evaluate('document.querySelector("#notice").hidden'), true, 'Retry instructions must not remain on the reading surface');
+      await reader.evaluate('oldRecoveryForm.requestSubmit(); oldRecoveryForm.requestSubmit();');
+      await reader.advance(30000);
+      assert.equal((await reader.data()).active.activeMs, 525000, 'Repeated recovery cannot reset the live baseline');
+      await reader.evaluate('Storage.prototype.setItem = recoveryOriginalSet');
+      const { identifier } = await reader.send('Page.addScriptToEvaluateOnNewDocument', { source: 'testClock.shift(3600000)' });
+      try { await reader.send('Page.reload'); await reader.wait('#recovery-form'); }
+      finally { await reader.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }); }
+      await reader.advance(60000);
+      assert.equal((await reader.data()).active.activeMs, 525000);
+      assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").value'), '8.8');
+      await reader.evaluate(`(() => { const button = document.querySelector('#recovery-form [type=submit]'); button.click(); button.click(); })()`);
+      await reader.wait('[data-action=pause]'); await reader.advance(90000);
+      await reader.evaluate(`(() => { const button = document.querySelector('[data-action=finish]'); button.click(); button.click(); })()`);
+      await reader.wait('#feedback-form'); await reader.advance(60000);
+      assert.equal((await reader.data()).active.activeMs, 615000, 'Second recovery counts earned time exactly once and Finish freezes it');
+      await reader.click('#feedback-form [value=comfortable]');
+      await reader.evaluate(`(() => { const button = document.querySelector('#feedback-form .primary'); button.click(); button.click(); })()`);
+      await reader.wait('#start-form');
+      const saved = await reader.data(); const recovered = saved.sessions.at(-1);
+      assert.equal(saved.sessions.length, 2, 'Repeated completion must save the recovered read only once');
+      assert.equal(recovered.id, checkpoint.active.id); assert.equal(recovered.activeMs, 615000);
+      assert.equal(recovered.uncertain, true); assert.equal(recovered.interruptions, 1);
+      assert.equal(recovered.prescribedTarget, 10); assert.equal(recovered.targetMinutes, 8);
+      assert.deepEqual(recovered.confidence, { passed: true, attempted: true, suppressed: true });
+      assert.deepEqual(recovered.targetSignal, { passed: true, attempted: false, suppressed: true });
+      assert.equal(await reader.evaluate('cueCalls.length'), 0, 'Recovery must preserve provenance without replaying cues');
+      await reader.click('[name=mode][value=train]'); await reader.click('#start-form [type=submit]');
+      await reader.advance(600000); await reader.click('[data-action=finish]');
+      await reader.click('[value=comfortable]'); await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+      assert.match(await reader.text(), /Recommended: 10 minutes/, 'Recovery must break the consecutive-success count without changing the recommendation');
+    } finally { await close(reader); }
+  });
+  await test('recovery enforces finite minute bounds even when the rounded suggestion appears in range', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.advance(60000);
+      await reader.send('Page.reload'); await reader.wait('#recovery-form');
+      const pending = await reader.data();
+      for (const value of ['', 'NaN', 'Infinity', '1e309', '-0.001', '10080.0001']) {
+        await reader.set('#recovery-form input', value); await reader.click('#recovery-form [type=submit]');
+        await reader.evaluate(`document.querySelector('#recovery-form').dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));`);
+        assert.equal(await reader.has('#recovery-form'), true);
+        assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").validity.valid'), false);
+        assert.deepEqual(await reader.data(), pending, 'Invalid input must not replace the checkpoint');
+      }
+      await reader.set('#recovery-form input', '0'); await reader.click('#recovery-form [type=submit]');
+      assert.equal((await reader.data()).active.activeMs, 0);
+      await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+      await reader.click('#start-form [type=submit]'); await reader.advance(604802400);
+      await reader.send('Page.reload'); await reader.wait('#recovery-form');
+      assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").value'), '10080.0');
+      const oversized = await reader.data();
+      await reader.click('#recovery-form [type=submit]');
+      assert.deepEqual(await reader.data(), oversized, 'Display rounding must not silently accept an out-of-range source');
+      assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").validity.customError'), true);
+      await reader.set('#recovery-form input', '10080.0'); await reader.click('#recovery-form [type=submit]');
+      assert.equal((await reader.data()).active.activeMs, 604800000, 'Explicitly entering the upper boundary is valid');
+    } finally { await close(reader); }
+  });
+  await test('recovery discard confirms once, restores focus on cancel and remains recoverable after failed writes', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.advance(30000);
+      await reader.click('[data-action=finish]'); await reader.click('#feedback-form [name=skip]'); await reader.wait('#start-form');
+      await reader.click('#start-form [type=submit]'); await reader.advance(60000);
+      await reader.send('Page.reload'); await reader.wait('#recovery-form');
+      const pending = await reader.data();
+      await reader.click('[data-action=discard]'); await reader.wait('#confirm-form');
+      assert.match(await reader.evaluate('document.querySelector("#dialog").textContent'), /reading time for this session will be deleted.*other saved reads will stay/s);
+      assert.equal(await reader.evaluate('document.activeElement.textContent'), 'Cancel');
+      await reader.press('Escape');
+      await until(() => reader.evaluate('document.activeElement.matches("[data-action=discard]")'), 'cancel restores discard focus');
+      assert.deepEqual(await reader.data(), pending);
+      await reader.click('[data-action=discard]'); await reader.click('[data-action=close-dialog]');
+      assert.deepEqual(await reader.data(), pending);
+      await reader.click('[data-action=discard]');
+      await reader.evaluate(`window.discardOriginalSet = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(key, value) {
+          if (key === 'reading-endurance-v1') throw new Error('quota');
+          return discardOriginalSet.call(this, key, value);
+        };`);
+      await reader.click('#confirm-form [type=submit]');
+      assert.deepEqual(await reader.data(), pending);
+      assert.equal(await reader.evaluate('document.querySelector("#dialog").open'), true);
+      assert.equal(await reader.evaluate('document.querySelector("#dialog-storage-error").hidden'), false);
+      await reader.evaluate('Storage.prototype.setItem = discardOriginalSet');
+      await reader.click('#dialog [data-action=retry-storage]');
+      assert.deepEqual(await reader.data(), pending);
+      await reader.evaluate(`(() => { const button = document.querySelector('#confirm-form [type=submit]'); button.click(); button.click(); })()`);
+      await reader.wait('#start-form');
+      const saved = await reader.data();
+      assert.equal(saved.active, null); assert.deepEqual(saved.sessions, pending.sessions);
+      assert.equal(await reader.evaluate('document.querySelector("#dialog").open'), false);
+    } finally { await close(reader); }
+  });
+  await test('recovery reflows at enlarged phone sizes and supports labeled decimal keyboard editing', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.set('#setup-cue', 'off'); await reader.click('#setup-form [type=submit]');
+      await reader.click('#start-form [type=submit]'); await reader.advance(578038.4);
+      await reader.send('Page.reload'); await reader.wait('#recovery-form');
+      const { nodes } = await reader.send('Accessibility.getFullAXTree');
+      assert.ok(nodes.some(node => node.role?.value === 'spinbutton' && node.name?.value === 'Minutes read'));
+      assert.equal(await reader.evaluate('document.querySelector("#recovery-form input").inputMode'), 'decimal');
+      for (const [width, height, scale, name] of [[320, 568, 100, 'portrait'], [320, 568, 200, 'enlarged'], [568, 320, 200, 'landscape'], [1280, 800, 200, 'desktop'], [320, 280, 200, 'keyboard-height']]) {
+        await reader.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 1000 });
+        await reader.evaluate(`document.documentElement.style.fontSize = '${scale}%'`);
+        assert.equal(await reader.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, name);
+        await reader.evaluate('document.querySelector("#main").focus()');
+        for (const selector of ['#recovery-form input', '#recovery-form [type=submit]', '[data-action=discard]']) {
+          await reader.press('Tab');
+          assert.equal(await reader.evaluate(`document.activeElement.matches(${JSON.stringify(selector)})`), true, 'Recovery focus order is minutes, Continue, discard');
+          assert.ok(await reader.evaluate('getComputedStyle(document.activeElement).outlineWidth !== "0px"'), 'Keyboard focus must remain visible');
+          assert.ok(await reader.evaluate('document.activeElement.getBoundingClientRect().height >= 48'), 'Recovery controls retain touch target size');
+        }
+        const { cssContentSize } = await reader.send('Page.getLayoutMetrics');
+        const shot = await reader.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true,
+          clip: { x: 0, y: 0, width: cssContentSize.width, height: cssContentSize.height, scale: 1 } });
+        await writeFile(join(screenshots, `recovery-${name}.png`), Buffer.from(shot.data, 'base64'));
+      }
+      await reader.click('#recovery-form input');
+      await reader.evaluate('document.querySelector("#recovery-form input").select()');
+      await reader.send('Input.insertText', { text: '9.6' });
+      await reader.press('Enter'); await reader.wait('[data-action=pause]');
+      assert.equal((await reader.data()).active.activeMs, 576000, 'Typing the displayed suggestion explicitly must use the typed value');
+    } finally { await close(reader); }
+  });
   await test('preview and timed vibration cues request longer brief pulses', async () => {
     const reader = await page(await context());
     try {
@@ -608,10 +820,9 @@ try {
       await reader.evaluate('document.dispatchEvent(new Event("resume"))');
       assert.equal(await reader.evaluate('wakeSentinels[5].released'), false);
       await reader.send('Page.reload'); await reader.wait('#recovery-form');
-      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Recovery must not acquire before explicit Resume');
+      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Recovery must not acquire before Continue reading');
       await reader.click('#recovery-form [type=submit]');
-      assert.deepEqual(await reader.evaluate('wakeRequests'), [], 'Recovering as paused must leave the screen alone');
-      await reader.click('[data-action=resume]');
+      await reader.wait('[data-action=pause]');
       assert.equal(await reader.evaluate('wakeSentinels[0].released'), false);
       await reader.evaluate(`(() => {
         const original = Storage.prototype.setItem;
@@ -1096,12 +1307,12 @@ try {
     assert.equal(await p.evaluate('Date.now() - JSON.parse(localStorage.getItem("reading-endurance-v1")).active.checkpointAt'), 10800000,
       'Recovery must exercise a checkpoint three hours older than the new document');
     assert.equal((await p.data()).active.activeMs, 60000);
-    assert.equal(await p.evaluate('document.querySelector("#recovery-form input").value'), '1', 'Closed time must not inflate the recovery default');
+    assert.equal(await p.evaluate('document.querySelector("#recovery-form input").value'), '1.0', 'Closed time must not inflate the recovery default');
     await p.set('#recovery-form input', '1.5'); await p.click('#recovery-form [type=submit]');
-    await p.wait('[data-action=resume]');
+    await p.wait('[data-action=pause]');
     assert.equal((await p.data()).active.activeMs, 90000);
     assert.equal((await p.data()).active.uncertain, true);
-    await p.click('[data-action=resume]'); await p.advance(29000); await p.advance(1000);
+    await p.advance(29000); await p.advance(1000);
     assert.equal(await p.evaluate('cueCalls.length'), 0);
     await p.click('[data-action=finish]'); await p.wait('#feedback-form');
     await p.click('#feedback-form [name=skip]'); await p.wait('#start-form');
@@ -1132,7 +1343,7 @@ try {
       await until(() => secondary.evaluate('navigator.locks.query().then(locks => locks.held.length === 0)'), 'origin lock is released');
       await secondary.click('[data-action=retry-lock]'); await secondary.wait('#recovery-form');
       assert.deepEqual(await secondary.data(), pending, 'Handoff must load the shared checkpoint unchanged');
-      assert.equal(await secondary.evaluate('document.querySelector("#recovery-form input").value'), '1');
+      assert.equal(await secondary.evaluate('document.querySelector("#recovery-form input").value'), '1.0');
       await secondary.click('#recovery-form [type=submit]'); await secondary.wait('[data-action=finish]');
       assert.equal((await secondary.data()).active.id, pending.active.id);
       await secondary.click('[data-action=finish]'); await secondary.click('#feedback-form [name=skip]'); await secondary.wait('#start-form');

@@ -107,9 +107,9 @@ To prevent automatic screen sleep, open **Settings → Screen**, check **Keep sc
 awake while reading**. The preference saves immediately. This is off by default
 and uses more battery. When supported, it keeps the screen awake only during a
 visible, running read; Pause, Finish, leaving the page, or backgrounding releases
-it. Resume or returning to the foreground requests it again. A recovered read
-stays paused until you choose Resume. The preference is saved locally and included
-in exports.
+it. Resume or returning to the foreground requests it again. **Continue reading**
+on the welcome-back screen also requests it when the preference is on. The
+preference is saved locally and included in exports.
 
 The small status below the reading controls shows whether the request succeeded
 or the screen may sleep. Your browser or device can refuse or release a wake lock,
@@ -135,11 +135,15 @@ it. **Clear all local data…** also removes all of those items after confirmati
   disagreed, confirm or correct the duration after **Finish**; that read remains
   uncertain and does not change training or longest-engaged records. Missed cues
   are not replayed. If the browser closed the page, use recovery instead.
-- If an unfinished read reappears after closing or reloading, confirm or correct
-  the minutes you actually read and choose **Recover as paused**, or discard it.
-  Time while the app was closed is not added. Recovered reads stay marked uncertain
-  and interrupted. After **Finish**, duration is frozen; save your feedback before
-  closing because unsubmitted answers are not restored on reload.
+- If an unfinished read reappears after closing or reloading, **Welcome back**
+  shows about how much reading time was saved. Adjust **Minutes read** if needed,
+  then choose **Continue reading** to resume immediately. Leaving the field alone
+  keeps the full saved time; editing it uses the minutes you enter. Time while the
+  page was closed or on this screen is not added. **Discard this session…** asks
+  before deleting this read; your other saved reads stay. Recovered reads remain
+  interrupted and do not change training or longest-engaged records.
+- After **Finish**, duration is frozen; save your feedback before closing because
+  unsubmitted answers are not restored on reload.
 - If saving fails, keep the page open, check that your browser allows local storage,
   and choose **Retry storage**. In Settings, this saves the valid changes still
   shown in the controls; for other forms, submit the unsaved form again. An export
@@ -308,7 +312,7 @@ files, or separate documentation tree. The PNGs are source assets to retain.
 | `recommend()` | Replay saved sessions and manual target events; return `{ target, comfortableCount, countTarget }` without mutating history. |
 | `statistics()` | Compute totals, separate engaged records, and continuation counts from completed records; accepts an explicit date for tests. |
 | `newSession()`, `ReadingClock` | Create a live session and mutate its timing/deadline state using supplied monotonic and wall timestamps. |
-| `recoverSession()`, `completeSession()` | Produce recovered or completed data without adding crash downtime or duplicating completion by ID. |
+| `recoveryDuration()`, `recoverSession()`, `completeSession()` | Validate confirmed recovery minutes, retain untouched milliseconds, and produce recovered or completed data without adding crash downtime or duplicating completion by ID. |
 | `validateData()`, `LocalStore` | Validate and normalize the versioned JSON model before reading/writing the injected storage interface. |
 | `render()`, `renderReadingInPlace()` | Choose the visible state, replace main content, and preserve reading control focus/scroll when required. |
 | `persist()`, `load()`, `acquire()` | Coordinate writes, failure UI, loading, and exclusive ownership. |
@@ -360,7 +364,7 @@ stateDiagram-v2
   Saved --> Idle
   Running --> Recovery: Reload / restore from persisted checkpoint
   Paused --> Recovery: Reload / restore
-  Recovery --> Paused: Confirm or correct duration
+  Recovery --> Running: Continue reading and persist
   Recovery --> Discarded: Confirm discard
   Paused --> Discarded: Confirm discard
   AwaitingFeedback --> Discarded: Confirm discard
@@ -430,10 +434,38 @@ for live hidden intervals, as described below.
 
 On reload/unclean close, the default recovery duration is **only the last saved
 active duration**. Hours since a checkpoint are never added automatically. The
-reader must explicitly recover or discard and can correct the duration. Recovery
-starts paused, marks uncertainty and interruption, suppresses all later cues, and
-excludes that read from progression and longest engaged records. A durably finished
-read reloads into pending feedback with the same frozen duration.
+saved milliseconds are accumulated timer intervals excluding pauses, not verified
+attention. A certain checkpoint normally provides a lower bound on the recorded
+active interval before closure; later unsaved time is unknown. An uncertain or
+previously corrected duration is an estimate, not a verified lower bound. The
+welcome-back screen therefore says “about,” without claiming exact reading time.
+
+The recovery field displays minutes rounded to one decimal (nearest tenth, ties
+up). Leaving it untouched passes the original milliseconds directly into recovery;
+it never converts the rounded suggestion back to milliseconds. An `input` or
+`change` event marks an explicit edit, even if the reader returns to the displayed
+suggestion. Edits accept fractional minutes at JavaScript number precision with
+no one-decimal restriction. Empty, nonfinite, negative, and greater-than-10,080
+minute values are rejected. The same inclusive 0–10,080 minute range applies to
+untouched source time before display rounding; a larger imported duration needs
+an explicit in-range correction. This does not change schema limits. The edit
+marker and unsaved field text are local to the form and are not persisted.
+
+**Continue reading** confirms the duration and immediately resumes. The app stages
+`recoverSession()`'s paused candidate and `ReadingClock.resume()`'s running
+transition, then saves that candidate in one write while holding the origin-wide
+Web Lock. Only after the write succeeds does it adopt a live clock with a fresh
+baseline. Closed time, recovery-screen time, and time spent in failed or slow
+writes are excluded. A failed write retains the accepted checkpoint and the
+form's edit; Retry storage does not accept the pending correction or start timing.
+The reader can retry Continue after storage works. Repeated submissions cannot
+recover an already resumed session.
+
+Recovery still marks uncertainty and interruption, suppresses all later cues,
+retains existing deadline/attempt provenance, and excludes the read from progression
+and longest-engaged records. The storage format has no separate user-corrected
+duration field; uncertainty remains even when the source milliseconds are untouched.
+A durably finished read reloads into pending feedback with the same frozen duration.
 
 On some platforms the monotonic clock does not advance through system sleep.
 When a running interval includes a hidden page and the clocks disagree by more

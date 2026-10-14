@@ -1,5 +1,5 @@
 import { CUES, OUTCOMES, STORAGE_KEY, LocalStore, emptyData, validateData, newSession,
-  ReadingClock, recoverSession, completeSession, recommend, statistics, ordered } from './core.js';
+  ReadingClock, recoveryDuration, recoverSession, completeSession, recommend, statistics, ordered } from './core.js';
 
 const $ = selector => document.querySelector(selector);
 const main = $('#main');
@@ -216,11 +216,13 @@ function renderFeedback() {
 
 function renderRecovery() {
   const s = db.active;
-  return `<p class="eyebrow">A read was left open</p><h1>Pick up where you left off.</h1>
-    <p>The last saved checkpoint has ${minutes(s.activeMs)} active minutes. Time since that checkpoint has not been added.</p>
-    <p class="muted">Confirm or correct the duration you actually read. A recovered read is marked uncertain and interrupted; it will not change training or longest engaged records. Missed cues are never replayed.</p>
-    <form id="recovery-form"><label class="field"><span>Active reading minutes so far</span><input type="number" name="duration" min="0" max="10080" step="any" value="${s.activeMs / 60000}" required></label>
-    <div class="actions"><button type="submit" class="primary">Recover as paused</button><button type="button" data-action="discard">Discard read…</button></div></form>`;
+  const suggestion = (Math.round(s.activeMs / 6000) / 10).toFixed(1);
+  return `<h1>Welcome back.</h1>
+    <p>We saved about ${minutes(s.activeMs)} minutes of reading.</p>
+    <form id="recovery-form"><label class="field"><span>Minutes read</span><input type="number" name="duration" inputmode="decimal" min="0" max="10080" step="any" value="${suggestion}" aria-describedby="recovery-help" required></label>
+    <p class="help" id="recovery-help">Adjust if needed.</p>
+    <button type="submit" class="primary wide">Continue reading</button></form>
+    <button type="button" class="quiet" data-action="discard">Discard this session…</button>`;
 }
 
 function recordMarkers(s) {
@@ -333,6 +335,12 @@ function syncEstimate(form) {
   if (!Number.isFinite(value) || value < 0) return;
   form.elements.estimate.max = value;
   form.querySelector('.estimate .help').textContent = `Between 0 and ${value} minutes. Leave blank if you do not know. Stopping when you lose the thread is appropriate.`;
+}
+
+function markRecoveryEdit(input) {
+  if (input.form?.id !== 'recovery-form' || input.name !== 'duration') return;
+  input.dataset.edited = 'true';
+  input.setCustomValidity('');
 }
 
 async function prepareAudio() {
@@ -482,6 +490,33 @@ function saveFeedback(form, skip, editedId) {
   } catch (error) { announce(error.message); }
 }
 
+function continueRecoveredRead(form) {
+  if (!locked || corrupt || !needsRecovery || !form.isConnected ||
+    !['running', 'paused'].includes(db.active?.state) || !form.reportValidity()) return;
+  const input = form.elements.duration;
+  let activeMs;
+  try {
+    activeMs = recoveryDuration(db.active.activeMs, input.dataset.edited ? input.value : null);
+  } catch (error) {
+    input.setCustomValidity(error.message);
+    input.reportValidity();
+    return;
+  }
+  const mono = performance.now();
+  const wall = Date.now();
+  const next = structuredClone(db);
+  next.active = recoverSession(db.active, activeMs, owner, wall);
+  // Stage the established paused -> running transition without changing accepted state.
+  new ReadingClock(next.active, mono, wall).resume(mono, wall);
+  if (!persist(next)) return;
+  // The live baseline begins after the write: neither waiting nor write time is reading.
+  clock = new ReadingClock(db.active, performance.now(), Date.now());
+  needsRecovery = false;
+  announce('');
+  render();
+  syncScreenWakeLock();
+}
+
 function saveSettings(retry = false) {
   if (!locked || corrupt || db.active || view !== 'settings') return false;
   const cue = $('#settings-cue');
@@ -530,16 +565,11 @@ document.addEventListener('submit', event => {
     if (persist(next)) { render(); announce('Ready when you are.'); }
   } else if (form.id === 'start-form') startRead(form);
   else if (form.id === 'feedback-form' || form.id === 'edit-form') saveFeedback(form, event.submitter?.name === 'skip', form.dataset.id);
-  else if (form.id === 'recovery-form') {
-    const next = structuredClone(db);
-    next.active = recoverSession(db.active, Number(values.get('duration')) * 60000, owner, Date.now());
-    if (persist(next)) {
-      needsRecovery = false; clock = new ReadingClock(db.active, performance.now(), Date.now()); render();
-    }
-  }
+  else if (form.id === 'recovery-form') continueRecoveredRead(form);
 });
 
 document.addEventListener('change', async event => {
+  markRecoveryEdit(event.target);
   if (['cue-form', 'screen-form', 'target-form'].includes(event.target.form?.id)) { saveSettings(); return; }
   if (event.target.name === 'mode') {
     mode = event.target.value;
@@ -578,6 +608,7 @@ document.addEventListener('change', async event => {
 });
 
 document.addEventListener('input', event => {
+  markRecoveryEdit(event.target);
   if (event.target.id === 'session-target') syncCollision();
   if (event.target.name === 'corrected') syncEstimate(event.target.form);
 });
@@ -600,7 +631,7 @@ document.addEventListener('click', async event => {
     }
     else if (persist()) {
       // Preserve unsaved form values. A failed form transaction must be submitted again.
-      if (db.active && ['running', 'paused'].includes(db.active.state)) render();
+      if (!needsRecovery && db.active && ['running', 'paused'].includes(db.active.state)) render();
       if (dialog.open && dialog.contains(button)) dialog.querySelector('[data-action="close-dialog"]').focus();
       announce('Local storage is working. Retry saving any unsaved changes.');
     }
@@ -646,7 +677,9 @@ document.addEventListener('click', async event => {
   } else if (action === 'finish' && clock) {
     clock.finish(performance.now(), Date.now()); stopCue(); persist(); render();
   } else if (action === 'discard') {
-    confirmAction('Discard this read?', 'This read and its pending feedback will not be saved.', 'Discard read', () => {
+    confirmAction(needsRecovery ? 'Discard this session?' : 'Discard this read?',
+      needsRecovery ? 'The reading time for this session will be deleted. Your other saved reads will stay.' : 'This read and its pending feedback will not be saved.',
+      needsRecovery ? 'Discard session' : 'Discard read', () => {
       const next = structuredClone(db); next.active = null;
       if (!persist(next)) return false;
       clock = null; needsRecovery = false; stopCue(); render(); announce('Read discarded.');

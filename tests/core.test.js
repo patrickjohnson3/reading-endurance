@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { newSession, ReadingClock, recoverSession, completeSession, recommend, statistics,
+import { newSession, ReadingClock, recoveryDuration, recoverSession, completeSession, recommend, statistics,
   emptyData, validateData, LocalStore, STORAGE_KEY } from '../core.js';
 
 function live(options = {}) {
@@ -153,6 +153,54 @@ test('wall fallback cannot count paused or finished time, carry a hidden baselin
   backward.clock.sample(61000, 1000, { resumed: true });
   assert.equal(backward.session.activeMs, 61000, 'A backward wall adjustment must not subtract active time');
   assert.equal(backward.session.uncertain, true);
+});
+
+test('recovery duration preserves untouched milliseconds and accepts explicit fractional minutes', () => {
+  assert.equal(recoveryDuration(578038.4), 578038.4);
+  assert.equal(recoveryDuration(578038.4, '9.6'), 576000);
+  assert.equal(recoveryDuration(2400), 2400); // Displays 0.0, not zero active time.
+  assert.equal(recoveryDuration(604797600), 604797600); // Displays 10080.0, still below the ceiling.
+  for (const [text, expected] of [['0', 0], ['10080', 604800000], ['0.000001', 0.06], ['1.23456789', 74074.0734]])
+    assert.ok(Math.abs(recoveryDuration(60000, text) - expected) < 0.000001);
+});
+
+test('recovery duration rejects empty, nonfinite and out-of-range values without rounding them into range', () => {
+  for (const text of ['', ' ', 'NaN', 'Infinity', '-Infinity', '1e309', '-0.000001', '10080.0001'])
+    assert.throws(() => recoveryDuration(60000, text), /0 to 10,080 minutes/);
+  for (const savedMs of [NaN, Infinity, -Infinity, -1, 604800001, null, '60000'])
+    assert.throws(() => recoveryDuration(savedMs), /0 to 10,080 minutes/);
+});
+
+test('repeated recovery and resume count only new active intervals and retain eligibility and cue provenance', () => {
+  const { session } = live({ target: 10, targetCue: true });
+  session.activeMs = 578038.4;
+  session.confidence = { passed: true, attempted: true, suppressed: false };
+  const source = structuredClone(session);
+  const recovered = recoverSession(session, recoveryDuration(session.activeMs), 'tab-b', 20000000);
+  assert.deepEqual(session, source, 'Recovery must not mutate the accepted checkpoint');
+  const first = new ReadingClock(recovered, 2000, 20000000);
+  first.resume(62000, 20060000); // Time on recovery screen is excluded.
+  first.resume(72000, 20070000); // A repeated Resume must not reset the baseline.
+  first.sample(82000, 20080000);
+  assert.equal(recovered.activeMs, 598038.4);
+  const again = recoverSession(recovered, recoveryDuration(recovered.activeMs), 'tab-c', 40000000);
+  const second = new ReadingClock(again, 0, 40000000);
+  second.resume(600000, 40600000);
+  second.finish(630000, 40630000);
+  second.finish(640000, 40640000);
+  assert.equal(again.activeMs, 628038.4);
+  assert.equal(again.uncertain, true);
+  assert.equal(again.interruptions, 1);
+  assert.deepEqual(again.confidence, { passed: true, attempted: true, suppressed: true });
+  assert.deepEqual(again.targetSignal, { passed: true, attempted: false, suppressed: true });
+  assert.equal(again.prescribedTarget, 10); assert.equal(again.targetMinutes, 10);
+  const data = emptyData(); data.active = again;
+  data.sessions = [record({ id: 'prior', order: 1 })]; data.nextOrder = 2;
+  const saved = completeSession(data, 'comfortable', null);
+  assert.equal(completeSession(saved, 'comfortable', null), null);
+  assert.deepEqual(recommend(10, saved.sessions), { target: 10, comfortableCount: 0, countTarget: null });
+  assert.equal(statistics([saved.sessions[1]]).comfortableMs, 0);
+  assert.equal(statistics([saved.sessions[1]], new Date(40630000)).weekMs, 628038.4);
 });
 
 test('recovery uses confirmed duration, excludes downtime, and suppresses all remaining cues', () => {

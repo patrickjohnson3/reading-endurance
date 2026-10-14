@@ -157,6 +157,15 @@ export class ReadingClock {
   }
 }
 
+// Null means the displayed suggestion was untouched: keep its source milliseconds.
+export function recoveryDuration(savedMs, enteredMinutes = null) {
+  const activeMs = enteredMinutes === null ? savedMs
+    : typeof enteredMinutes === 'string' && enteredMinutes.trim() ? Number(enteredMinutes) * 60000 : NaN;
+  if (!Number.isFinite(activeMs) || activeMs < 0 || activeMs > 10080 * 60000)
+    throw new Error('Enter a time from 0 to 10,080 minutes.');
+  return activeMs;
+}
+
 export function recoverSession(session, activeMs, owner, wall) {
   return { ...structuredClone(session), activeMs, owner, checkpointAt: wall, state: 'paused',
     uncertain: true, interruptions: Math.max(1, session.interruptions),
