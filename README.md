@@ -468,12 +468,20 @@ duration field; uncertainty remains even when the source milliseconds are untouc
 A durably finished read reloads into pending feedback with the same frozen duration.
 
 On some platforms the monotonic clock does not advance through system sleep.
-When a running interval includes a hidden page and the clocks disagree by more
-than two seconds, the clock adds the longer of the monotonic and wall intervals.
-For example, nine minutes followed by ten minutes locked displays nineteen minutes
-on return, even if the monotonic clock stopped. Each sample resets both baselines,
-so repeated resume/visibility events cannot add the same gap again. Resume after
-Pause starts a new foreground interval; paused time and time after Finish never count.
+While a running page is hidden, the live clock retains the interval's starting
+timestamps and active total across callbacks. If the clocks disagree by more than
+two seconds over that interval, its contribution uses the longer of monotonic and
+wall elapsed time. Checking only the latest callback gap is insufficient: frequent
+background callbacks can each lose less than two seconds while losing minutes in
+total. Thirty seconds followed by five minutes locked therefore displays 5:30 on
+return even if the monotonic clock stopped between short background callbacks.
+
+The interval's contribution is recomputed, not added again on each sample, so
+repeated resume/visibility events cannot count a gap twice. A backward wall
+adjustment retains monotonic progress and rebases the hidden interval. Returning
+to the foreground ends that interval; Resume after Pause starts with fresh
+baselines. Paused time and time after Finish never count. These live baselines
+are not persisted and do not change reload/crash recovery.
 
 Any wall/monotonic disagreement over two seconds still marks the read uncertain
 and suppresses remaining cues. Sleep and wall-clock changes cannot be distinguished

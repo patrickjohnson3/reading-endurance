@@ -286,6 +286,41 @@ try {
     await p.wait('#start-form');
     assert.equal((await p.data()).settings.initialTarget, 10);
   });
+  await test('frequent hidden clock samples retain five locked minutes and never replay cues', async () => {
+    const reader = await page(await context());
+    try {
+      await reader.evaluate('navigator.serviceWorker.ready'); await reader.send('Page.reload'); await reader.wait('#setup-form');
+      assert.equal(await reader.evaluate('!!navigator.serviceWorker.controller'), true, 'Exercise the cached shell');
+      await reader.set('#setup-cue', 'vibration'); await reader.click('#setup-form [type=submit]');
+      for (const awakeMs of [0, 100]) {
+        await reader.click('[name=mode][value=train]'); await reader.set('#session-target', '5');
+        await reader.click('#target-cue'); await reader.click('#start-form [type=submit]'); await reader.advance(30000);
+        const id = (await reader.data()).active.id;
+        await reader.evaluate(`testVisible(false);
+          for (let second = 0; second < 300; second++) {
+            testClock.advance(${awakeMs}); testClock.shift(${1000 - awakeMs});
+            // Lifecycle samples drive the same tick path without waiting for real background timers.
+            document.dispatchEvent(new Event('resume'));
+          }
+          testVisible(true);`);
+        assert.equal(await reader.evaluate('document.querySelector("#timer").textContent'), '05:30');
+        const running = (await reader.data()).active;
+        assert.equal(running.id, id); assert.equal(running.state, 'running');
+        assert.equal(running.activeMs, 330000); assert.equal(running.uncertain, true);
+        assert.deepEqual(running.confidence, { passed: true, attempted: false, suppressed: true });
+        assert.deepEqual(running.targetSignal, { passed: true, attempted: false, suppressed: true });
+        await reader.evaluate(`document.dispatchEvent(new Event('resume')); testVisible(true);`);
+        assert.equal((await reader.data()).active.activeMs, 330000, 'Unlock events must not count the hidden interval twice');
+        await reader.advance(1000); await reader.click('[data-action=finish]'); await reader.wait('#feedback-form');
+        assert.equal((await reader.data()).active.activeMs, 331000, 'Foreground reading continues from the recovered live total');
+        await reader.click('#feedback-form [value=comfortable]'); await reader.click('#feedback-form .primary'); await reader.wait('#start-form');
+        const saved = (await reader.data()).sessions.at(-1);
+        assert.equal(saved.activeMs, 331000); assert.equal(saved.uncertain, true); assert.equal(saved.interruptions, 1);
+        assert.match(await reader.text(), /Recommended: 10 minutes/, 'Ambiguous sleep time must not alter training');
+        assert.equal(await reader.evaluate('cueCalls.length'), 0);
+      }
+    } finally { await close(reader); }
+  });
   await test('recovery rounds only its display, preserves untouched time and honors explicit edits', async () => {
     const reader = await page(await context());
     try {

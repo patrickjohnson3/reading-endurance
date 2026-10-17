@@ -135,6 +135,68 @@ test('live reads include screen-lock time even when the monotonic clock stops or
   assert.equal(finishing.session.state, 'awaiting-feedback');
 });
 
+test('short background callbacks cannot hide cumulative sleep time', () => {
+  for (const step of [250, 1000, 1999, 2000, 5000, 300000]) {
+    for (const awakeFraction of [0, 0.1, 1]) {
+      const { session, clock } = live({ target: 5, targetCue: true });
+      clock.sample(30000, 1030000);
+      clock.sample(30000, 1030000, { visible: false });
+      for (let elapsed = 0; elapsed < 300000;) {
+        elapsed = Math.min(300000, elapsed + step);
+        assert.deepEqual(clock.sample(30000 + elapsed * awakeFraction, 1030000 + elapsed, { visible: false }), []);
+      }
+      const mono = 30000 + 300000 * awakeFraction;
+      assert.deepEqual(clock.sample(mono, 1330000, { resumed: true }), []);
+      assert.equal(session.activeMs, 330000, `30 seconds plus five locked minutes, step ${step}, awake fraction ${awakeFraction}`);
+      assert.equal(session.uncertain, awakeFraction !== 1);
+      assert.equal(session.confidence.passed, true); assert.equal(session.targetSignal.passed, true);
+      assert.equal(session.confidence.attempted, false); assert.equal(session.targetSignal.attempted, false);
+      clock.sample(mono, 1330000, { resumed: true });
+      clock.sample(mono + 1000, 1331000);
+      assert.equal(session.activeMs, 331000, 'Returning and repeated callbacks cannot count the gap again');
+    }
+  }
+});
+
+test('cumulative hidden drift keeps the two-second tolerance and ends at Pause or Finish', () => {
+  const { session, clock } = live();
+  clock.sample(30000, 1030000);
+  clock.sample(30000, 1030000, { visible: false });
+  clock.sample(30000, 1031000, { visible: false });
+  clock.sample(30000, 1032000, { visible: false });
+  assert.equal(session.activeMs, 30000); assert.equal(session.uncertain, false);
+  clock.sample(30000, 1032001, { visible: false });
+  assert.equal(session.activeMs, 32001); assert.equal(session.uncertain, true);
+  for (const transition of ['pause', 'finish']) {
+    const { session: s, clock: c } = live();
+    c.sample(30000, 1030000);
+    c.sample(30000, 1030000, { visible: false });
+    for (let second = 1; second <= 299; second++) c.sample(30000, 1030000 + second * 1000, { visible: false });
+    c[transition](30000, 1330000);
+    assert.equal(s.activeMs, 330000, `${transition} must include the final hidden interval`);
+    c.sample(30000, 1930000, { visible: false });
+    assert.equal(s.activeMs, 330000, `${transition} must freeze the hidden total`);
+    if (transition === 'pause') {
+      c.resume(30000, 1930000);
+      c.sample(31000, 1931000);
+      assert.equal(s.activeMs, 331000, 'Resume must not retain the previous hidden interval');
+    }
+  }
+});
+
+test('hidden wall adjustments do not reverse time or stop subsequent active intervals', () => {
+  const { session, clock } = live();
+  clock.sample(30000, 1030000);
+  clock.sample(30000, 1030000, { visible: false });
+  clock.sample(31000, 1331000, { visible: false });
+  assert.equal(session.activeMs, 331000);
+  clock.sample(32000, 1032000, { visible: false }); // Undo a wall adjustment; retain the active second.
+  assert.equal(session.activeMs, 332000);
+  clock.sample(33000, 1033000, { visible: false });
+  assert.equal(session.activeMs, 333000);
+  assert.equal(session.uncertain, true);
+});
+
 test('wall fallback cannot count paused or finished time, carry a hidden baseline through Resume, or reverse time', () => {
   const { session, clock } = live();
   clock.pause(540000, 1540000);

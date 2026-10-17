@@ -89,16 +89,30 @@ export class ReadingClock {
     this.mono = mono;
     this.wall = wall;
     this.visible = true;
+    this.hiddenInterval = null;
   }
   sample(mono, wall, { visible = true, resumed = false, allowCue = true } = {}) {
     const s = this.session;
     const delta = Math.max(0, mono - this.mono);
     const wallDelta = wall - this.wall;
-    const clockChanged = Math.abs(wallDelta - delta) > 2000;
+    let clockChanged = Math.abs(wallDelta - delta) > 2000;
     if (s.state === 'running') {
-      // Catch up after screen lock when the monotonic clock stopped. Wall changes
-      // during a hidden interval are indistinguishable from sleep, so confirm below.
-      s.activeMs += clockChanged && (!this.visible || !visible) ? Math.max(delta, wallDelta) : delta;
+      if (!this.visible || !visible) {
+        // Retain the whole hidden interval: frequent callbacks must not erase
+        // sleep that arrives as many individually small clock disagreements.
+        const interval = this.hiddenInterval ||= { mono: this.mono, wall: this.wall, activeMs: s.activeMs };
+        const hiddenMono = Math.max(0, mono - interval.mono);
+        const hiddenWall = wall - interval.wall;
+        clockChanged ||= Math.abs(hiddenWall - hiddenMono) > 2000;
+        if (wallDelta < 0) {
+          // A backward adjustment cannot undo earned time or freeze later samples.
+          s.activeMs += delta;
+          this.hiddenInterval = { mono, wall, activeMs: s.activeMs };
+        } else {
+          const elapsed = clockChanged ? Math.max(hiddenMono, hiddenWall) : hiddenMono;
+          s.activeMs = Math.max(s.activeMs, interval.activeMs + elapsed);
+        }
+      } else s.activeMs += delta;
       // Sleep/clock ambiguity is never silently promoted to continuous engagement.
       if (clockChanged) {
         s.uncertain = true;
@@ -107,6 +121,7 @@ export class ReadingClock {
         s.targetSignal.suppressed = true;
       }
     }
+    if (visible || s.state !== 'running') this.hiddenInterval = null;
     this.visible = visible;
     this.mono = mono;
     this.wall = wall;
@@ -146,6 +161,7 @@ export class ReadingClock {
     this.mono = mono;
     this.wall = wall;
     this.visible = true;
+    this.hiddenInterval = null;
     this.session.state = 'running';
     this.session.checkpointAt = wall;
   }
